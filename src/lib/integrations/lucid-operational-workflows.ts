@@ -33,7 +33,18 @@ async function context(action: WorkflowAction) {
   const { data: profile, error } = await supabase.from('profiles').select('id, organization_id, active, role').eq('id', user.id).maybeSingle();
   if (error || !profile?.active) throw new OperationalWorkflowAuthError('An active Lucid Core profile is required.');
   if (!roleByAction[action].includes(profile.role)) throw new OperationalWorkflowAuthError('Your role cannot perform this operational action.');
-  return supabase;
+  return { supabase, profile };
+}
+function controlledSourceSystem(value: unknown) {
+  if (value == null || value === '') return 'lucid_core' as const;
+  if (value !== 'lucid_core' && value !== 'lucid_qa') throw new Error('Use the Lucid Core or controlled QA source only.');
+  return value;
+}
+function qaReference(value: unknown) {
+  const reference = string(value, 'QA reference');
+  if (!reference) throw new Error('QA reference is required.');
+  if (!reference.toUpperCase().startsWith('QA-')) throw new Error('Controlled QA references must begin with QA-.');
+  return reference;
 }
 
 function string(value: unknown, name: string, optional = false) {
@@ -51,14 +62,18 @@ function numeric(value: unknown, name: string, optional = false) {
   if (!Number.isFinite(result) || (!optional && result <= 0)) throw new Error(`${name} must be a positive number.`);
   return result;
 }
-async function rpc(action: WorkflowAction, name: string, args: Record<string, unknown>) {
-  const supabase = await context(action);
+async function rpc(action: WorkflowAction, name: string, args: Record<string, unknown>, sourceSystem: 'lucid_core'|'lucid_qa' = 'lucid_core') {
+  const { supabase, profile } = await context(action);
+  if (sourceSystem === 'lucid_qa' && profile.role !== 'lucid_admin') {
+    throw new OperationalWorkflowAuthError('Only Lucid Admin can create controlled QA records.');
+  }
   const { data, error } = await supabase.rpc(name, args);
   if (error) throw new Error(error.message);
   return Array.isArray(data) ? data[0] : data;
 }
 
 export async function runOperationalWorkflow(action: string, body: Record<string, unknown>) {
+  const sourceSystem = controlledSourceSystem(body.sourceSystem);
   switch (action) {
     case 'preview-historical-import': return previewHistoricalImport({
       entity: string(body.entity, 'Historical entity') as import('@/lib/integrations/historical-import').HistoricalImportEntity,
@@ -69,10 +84,15 @@ export async function runOperationalWorkflow(action: string, body: Record<string
       sourceReference: string(body.sourceReference, 'Source reference', true) || undefined,
       rows: Array.isArray(body.rows) ? body.rows as import('@/lib/integrations/historical-import').HistoricalImportRow[] : [],
     });
-    case 'create-receipt': return rpc('create_receipt', 'create_lucid_receipt', {
-      p_transaction_number: string(body.transactionNumber, 'Receipt number'), p_item_id: string(body.itemCode, 'Item code'), p_lot_code: string(body.lotCode, 'Lot code'),
-      p_quantity: numeric(body.quantity, 'Quantity'), p_quantity_uom: string(body.uom, 'UOM'), p_net_weight: numeric(body.netWeight, 'Net weight', true), p_weight_uom: string(body.weightUom, 'Weight UOM', true), p_warehouse_id: string(body.warehouse, 'Warehouse', true), p_source_record_id: null, p_vendor_name: string(body.vendor, 'Vendor', true), p_purchase_order_reference: string(body.purchaseOrder, 'PO reference', true), p_internal_lot_number: string(body.internalLot, 'Internal lot', true), p_unit_cost: numeric(body.unitCost, 'Unit cost', true), p_charge: numeric(body.charge, 'Charge', true) ?? 0,
-    });
+    case 'create-receipt': {
+      const isQa = sourceSystem === 'lucid_qa';
+      const transactionNumber = isQa ? qaReference(body.transactionNumber) : string(body.transactionNumber, 'Receipt number');
+      const sourceReference = isQa ? qaReference(body.qaReference ?? transactionNumber) : null;
+      return rpc('create_receipt', isQa ? 'create_lucid_qa_receipt' : 'create_lucid_receipt', {
+        p_transaction_number: transactionNumber, p_item_id: string(body.itemCode, 'Item code'), p_lot_code: string(body.lotCode, 'Lot code'),
+        p_quantity: numeric(body.quantity, 'Quantity'), p_quantity_uom: string(body.uom, 'UOM'), p_net_weight: numeric(body.netWeight, 'Net weight', true), p_weight_uom: string(body.weightUom, 'Weight UOM', true), p_warehouse_id: string(body.warehouse, 'Warehouse', true), p_source_record_id: sourceReference, p_vendor_name: string(body.vendor, 'Vendor', true), p_purchase_order_reference: string(body.purchaseOrder, 'PO reference', true), p_internal_lot_number: string(body.internalLot, 'Internal lot', true), p_unit_cost: numeric(body.unitCost, 'Unit cost', true), p_charge: numeric(body.charge, 'Charge', true) ?? 0,
+      }, sourceSystem);
+    }
     case 'append-receipt-line': return rpc('append_receipt_line', 'append_lucid_receipt_line', { p_transaction_id: string(body.transactionId, 'Receipt'), p_item_id: string(body.itemCode, 'Item code'), p_lot_code: string(body.lotCode, 'Lot code'), p_quantity: numeric(body.quantity, 'Quantity'), p_quantity_uom: string(body.uom, 'UOM'), p_net_weight: numeric(body.netWeight, 'Net weight', true), p_weight_uom: string(body.weightUom, 'Weight UOM', true), p_internal_lot_number: string(body.internalLot, 'Internal lot', true), p_unit_cost: numeric(body.unitCost, 'Unit cost', true), p_charge: numeric(body.charge, 'Charge', true) ?? 0 });
     case 'post-inventory': return rpc('post_inventory_transaction', 'post_lucid_inventory_transaction', { p_transaction_id: string(body.transactionId, 'Inventory transaction') });
     case 'create-production-run': return rpc('create_production_run', 'create_lucid_production_run', { p_order_id: string(body.orderId, 'Order'), p_output_production_lot_id: string(body.productionLotId, 'Production lot'), p_output_item_id: string(body.itemCode, 'Item code'), p_reference: string(body.reference, 'Reference', true) });

@@ -1,6 +1,6 @@
 'use client';
 
-import { ChangeEvent, FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRightLeft, Bell, Boxes, ChartNoAxesCombined, CheckCheck, ChevronDown, ChevronRight, CircleAlert, ClipboardList, FileText, FlaskConical, FolderOpen, Forward, Grid3X3, Home as HomeIcon, LogOut, Menu, MessageSquare, PackageCheck, Search, Send, Settings, ShieldCheck, ScanSearch, Truck, UsersRound, X } from 'lucide-react';
 import { orders as seedOrders, pallets as seedPallets } from '@/lib/core/mock';
 import type { Pallet, UnifiedOrder } from '@/lib/core/types';
@@ -147,10 +147,10 @@ const defaultUsers: UserRecord[] = [
 ];
 
 const roleSections: Record<Role, Section[]> = {
-  office: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Samples', 'Documents', 'Office', 'Sales', 'MasterData'],
+  office: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'MasterData'],
   production: ['Home', 'Orders', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace'],
-  leadership: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Logistics', 'Sales', 'Roadmap', 'MasterData'],
-  lucid_admin: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Imports', 'Samples', 'Documents', 'Office', 'Logistics', 'Sales', 'Roadmap', 'MasterData', 'System'],
+  leadership: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'MasterData'],
+  lucid_admin: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Imports', 'MasterData', 'System'],
 };
 
 const roleLabels: Record<Role, string> = {
@@ -418,13 +418,15 @@ export default function Home() {
   const [scanValue, setScanValue] = useState('');
   const [scanCode, setScanCode] = useState('');
   const [scanItem, setScanItem] = useState('');
-  const fileInput = useRef<HTMLInputElement>(null);
-  const logoInput = useRef<HTMLInputElement>(null);
   const brandButton = useRef<HTMLButtonElement>(null);
   const mobileDrawer = useRef<HTMLElement>(null);
   const [navigationRestored, setNavigationRestored] = useState(false);
 
   function setWorkspaceSection(nextSection: Section, source: string) {
+    if (profile && !roleSections[profile.role].includes(nextSection)) {
+      nextSection = 'Home';
+      source = 'restricted local-only workspace';
+    }
     setSection(currentSection => {
       if (process.env.NODE_ENV === 'development' && currentSection !== nextSection) {
         console.info('[navigation] view change', {
@@ -441,7 +443,7 @@ export default function Home() {
     const restoreNavigation = () => {
       const params = new URLSearchParams(window.location.search);
       const view = params.get('view');
-      const validSections: Section[] = ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Imports', 'Samples', 'Documents', 'Office', 'Logistics', 'Sales', 'Roadmap', 'MasterData', 'System'];
+      const validSections: Section[] = ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Imports', 'MasterData', 'System'];
       if (view === 'order-review') setWorkspaceSection('Exceptions', 'url restore');
       else if (view === 'PalletBreakdown') setWorkspaceSection('Pallets', 'url restore');
       else if (view && validSections.includes(view as Section)) setWorkspaceSection(view as Section, 'url restore');
@@ -497,38 +499,6 @@ export default function Home() {
       brandButton.current?.focus();
     };
   }, [mobileNavOpen]);
-
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem('lucid-core-circle-r-v2');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        setState({
-          orders: parsed.orders || seedOrders,
-          pallets: parsed.pallets || seedPallets,
-          reviewedExceptions: parsed.reviewedExceptions || [],
-          exceptionDecisions: parsed.exceptionDecisions || {},
-          branding: { ...defaultBranding, ...(parsed.branding || {}) },
-          reports: parsed.reports || [],
-          users: parsed.users || defaultUsers,
-          audit: parsed.audit || [],
-          inventory: parsed.inventory || [],
-          samples: parsed.samples || [],
-          officeRecords: parsed.officeRecords || [],
-          logistics: parsed.logistics || [],
-          sales: parsed.sales || [],
-          conversations: parsed.conversations || defaultConversations,
-          messages: (parsed.messages || []).map((m:any) => m.threadId ? m : ({ id:m.id, threadId:m.toUserId==='all' ? 'thread-team' : ['usr-'+String(m.fromUserId).replace(/^usr-/,''),'usr-'+String(m.toUserId).replace(/^usr-/,'')].sort().join('--'), fromUserId:m.fromUserId, body:m.body, createdAt:m.createdAt, readBy:m.readBy || [m.fromUserId] })),
-        });
-      }
-    } catch { /* safe fallback */ }
-  }, []);
-  useEffect(() => {
-    try {
-      const { conversations: _conversations, messages: _messages, ...localState } = state;
-      localStorage.setItem('lucid-core-circle-r-v2', JSON.stringify(sharedMessaging ? localState : state));
-    } catch { /* ignore */ }
-  }, [state, sharedMessaging]);
 
   async function loadProfile(userId: string) {
     const { data, error } = await supabase
@@ -799,15 +769,17 @@ export default function Home() {
   const role = profile?.role || 'office';
   const currentUserId = profile?.id || '';
   const visibleSections = roleSections[role];
+  useEffect(() => {
+    if (profile && !visibleSections.includes(section)) setWorkspaceSection('Home', 'restricted local-only workspace');
+  }, [profile, section, visibleSections]);
   const mobileNavigationGroups = [
     { label: 'Operations', sections: ['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace','Reports'] as Section[] },
-    { label: 'Records & growth', sections: ['Samples','Documents','Office','Logistics','Sales'] as Section[] },
-    { label: 'Management', sections: ['Roadmap','MasterData','Imports','System'] as Section[] },
+    { label: 'Management', sections: ['MasterData','Imports','System'] as Section[] },
   ];
   const mobilePrimarySections: Record<Role, Section[]> = {
     office: ['Home', 'Orders', 'Exceptions', 'Shipments'],
     production: ['Home', 'Production', 'Inventory', 'Pallets'],
-    leadership: ['Home', 'Orders', 'Logistics'],
+        leadership: ['Home', 'Orders', 'Reports'],
     lucid_admin: ['Home', 'Orders', 'System'],
   };
   const mobileBottomSections = mobilePrimarySections[role].filter(item => visibleSections.includes(item));
@@ -1040,24 +1012,6 @@ export default function Home() {
     audit('Exception reopened', key, 'Previously reviewed exception reopened for correction');
   }
 
-  async function handleFile(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const text = await file.text();
-      const parsed = normalizeSpsCsv(text);
-      const issues = orderIssues(parsed);
-      parsed.status = issues.length ? 'exception' : 'mapped';
-      setState(prev => ({ ...prev, orders: [parsed, ...prev.orders.filter(o => o.externalPo !== parsed.externalPo)] }));
-      setSelectedOrderId(parsed.id);
-      setNotice({ tone: issues.length ? 'warning' : 'success', message: issues.length ? `PO ${parsed.externalPo} imported. ${issues.length} item needs review.` : `PO ${parsed.externalPo} imported and validated.` });
-      setWorkspaceSection('Orders', 'SPS file import');
-    } catch (error) {
-      setNotice({ tone: 'warning', message: error instanceof Error ? error.message : 'Could not read this SPS file.' });
-    }
-    event.target.value = '';
-  }
-
   function resolveException(orderId: string, message: string, decision: Omit<ExceptionDecision, 'reviewedAt'>) {
     const key = `${orderId}:${message}`;
     setState(prev => ({
@@ -1067,28 +1021,6 @@ export default function Home() {
     }));
     audit('Exception verified', key, `Verified using ${decision.source}`);
     setNotice({ tone: 'success', message: `Exception verified using ${decision.source}. No live SPS or Food Connex record was changed.` });
-  }
-
-  function updateBranding(patch: Partial<BrandingSettings>) {
-    setState(prev => ({ ...prev, branding: { ...prev.branding, ...patch } }));
-  }
-
-  function handleLogo(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      setNotice({ tone: 'warning', message: 'Please choose an image file for the company logo.' });
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      if (typeof reader.result === 'string') {
-        updateBranding({ logoDataUrl: reader.result });
-        setNotice({ tone: 'success', message: 'Brand logo updated for this workspace.' });
-      }
-    };
-    reader.readAsDataURL(file);
-    event.target.value = '';
   }
 
   function createPallet() {
@@ -1334,10 +1266,8 @@ export default function Home() {
 
           {section === 'Home' && <>
             <div className="page-heading compact-heading">
-              <div><span className="kicker">{role === 'leadership' ? 'Operations overview' : 'Today'}</span><h1>{role === 'production' ? 'Ready for the floor.' : role === 'leadership' ? 'What needs your attention.' : `Good ${new Date().getHours() < 12 ? 'morning' : 'afternoon'}.`}</h1><p>{role === 'office' ? 'Orders, order review and Advance Ship Notice work — only what you need right now.' : role === 'production' ? 'See Picking / Production work and complete the Pallet Breakdown without moving between systems.' : role === 'leadership' ? 'A simple view of current activity. Open details only when you need them.' : `Manage ${state.branding.companyName} operations and integrations from one place.`}</p></div>
-              {(role === 'office' || role === 'lucid_admin') && <button className="primary" onClick={() => fileInput.current?.click()}>Import SPS order</button>}
+              <div><span className="kicker">{role === 'leadership' ? 'Operations overview' : 'Today'}</span><h1>{role === 'production' ? 'Ready for the floor.' : role === 'leadership' ? 'What needs your attention.' : `Good ${new Date().getHours() < 12 ? 'morning' : 'afternoon'}.`}</h1><p>{role === 'office' ? 'Orders, order review, receiving, shipping, and inventory work — only what you need right now.' : role === 'production' ? 'See Picking / Production work and complete the Pallet Breakdown without moving between systems.' : role === 'leadership' ? 'A simple view of current activity. Open details only when you need them.' : `Manage ${state.branding.companyName} operations and integrations from one place.`}</p></div>
             </div>
-            <input ref={fileInput} className="hidden-input" type="file" accept=".csv,text/csv" onChange={handleFile} />
 
             <section className="home-focus-strip">
               <div className="home-focus-copy"><span className="home-focus-eyebrow">Your workspace</span><strong>{role === 'production' ? 'Production + Pallet Breakdown' : role === 'office' ? 'Orders + Order Review + ASN' : role === 'leadership' ? 'Leadership overview' : 'Full operations control'}</strong><small>Only the areas relevant to this role are shown. Open a card when you need the details.</small></div>
@@ -1358,8 +1288,7 @@ export default function Home() {
           </>}
 
           {section === 'Orders' && <>
-            <div className="page-heading"><div><span className="kicker">Incoming Orders</span><h1>One clear place to check incoming orders.</h1><p>Review what needs attention, then keep ready orders together for the next approved step.</p></div>{(role === 'office' || role === 'lucid_admin') && <button className="primary" onClick={() => void importSandboxOrders()}>Import SPS Sandbox orders</button>}</div>
-            <input ref={section === 'Orders' ? fileInput : undefined} className="hidden-input" type="file" accept=".csv,text/csv" onChange={handleFile} />
+            <div className="page-heading"><div><span className="kicker">Incoming Orders</span><h1>One clear place to check incoming orders.</h1><p>Review what needs attention, then keep ready orders together for the next approved step.</p></div>{role === 'lucid_admin' && <button className="secondary" onClick={() => void importSandboxOrders()}>Refresh SPS Sandbox test orders</button>}</div>
             <IncomingOrdersQueue orders={activeStagedOrders} lines={stagedLines} exceptions={stagedExceptions} onOpenOrder={id => { setSelectedStagedOrderId(id); setWorkspaceSection('Exceptions', 'incoming order'); }} />
           </>}
 
@@ -1494,40 +1423,20 @@ export default function Home() {
           {section === 'MasterData' && profile && <MasterDataSetup organizationId={profile.organization_id} role={role} />}
 
           {section === 'System' && <>
-            <div className="page-heading"><div><span className="kicker">Lucid Admin</span><h1>Personalize and manage the hub.</h1><p>Branding, connections and technical settings stay here so regular staff only sees the work they need.</p></div></div>
-
-            <section className="surface admin-section">
-              <div className="section-head"><div><span className="kicker">Company branding</span><h2>Make Lucid Core feel like Circle R's own system.</h2><p>These settings are saved locally in this prototype. In production they will be stored centrally.</p></div></div>
-              <div className="branding-grid">
-                <div className="logo-editor">
-                  <div className="logo-preview">{state.branding.logoDataUrl ? <img src={state.branding.logoDataUrl} alt="Current company logo" /> : <span>L</span>}</div>
-                  <div><strong>Company logo</strong><p>PNG, JPG or WebP. A transparent PNG works best.</p><button className="secondary" onClick={() => logoInput.current?.click()}>Upload logo</button>{state.branding.logoDataUrl && <button className="text-button remove-logo" onClick={() => updateBranding({ logoDataUrl: undefined })}>Remove</button>}</div>
-                  <input ref={logoInput} className="hidden-input" type="file" accept="image/*" onChange={handleLogo} />
-                </div>
-                <div className="settings-fields">
-                  <label><span>App name</span><input value={state.branding.appName} onChange={e => updateBranding({ appName: e.target.value })} /></label>
-                  <label><span>Company name</span><input value={state.branding.companyName} onChange={e => updateBranding({ companyName: e.target.value })} /></label>
-                  <label><span>Subtitle</span><input value={state.branding.tagline} onChange={e => updateBranding({ tagline: e.target.value })} /></label>
-                </div>
-              </div>
-            </section>
+            <div className="page-heading"><div><span className="kicker">Lucid Admin</span><h1>Operational controls and integration boundaries.</h1><p>Organization-wide operating records are managed in the relevant Lucid workspaces. Browser-only setup controls are intentionally unavailable in the pilot.</p></div></div>
 
             <div className="admin-subheading"><span className="kicker">Access</span><h2>Authenticated account</h2></div>
             <section className="surface admin-section"><div className="section-head"><div><h2>{profile?.display_name}</h2><p>Your active organization and role are verified from your Lucid Core profile when you sign in.</p></div><span className="status-chip ready">{roleLabels[role]}</span></div></section>
 
-            <div className="admin-subheading"><span className="kicker">Traceability</span><h2>Edit history</h2></div>
-            <section className="surface audit-list">{state.audit.length ? state.audit.slice(0,20).map(event => <div className="audit-row" key={event.id}><div><strong>{event.action}</strong><span>{event.entity}</span></div><div><span>{event.user}</span><small>{new Date(event.at).toLocaleString()}</small></div><p>{event.detail}</p></div>) : <p className="muted-copy">Edits, reopen actions and confirmations will appear here.</p>}</section>
-
-
             <div className="admin-subheading"><span className="kicker">Connections</span><h2>Integration status</h2></div>
             <div className="integration-grid">{[
-              ['SPS Commerce','Prototype adapter','Incoming orders / future EDI'],
-              ['Food Connex','Read-only prototype','Orders, items, cases / future supported writes'],
-              ['QuickBooks','Not connected','Future accounting handoff'],
-              ['Microsoft / SharePoint','Connector-ready','Centralized report archive; reports can be queued now'],
-              ['Supabase / Postgres','Schema included','Shared database, real-time messages, authentication and audit history'],
+              ['SPS Commerce','EDI / trading-partner authority','SPS remains the authority for inbound and outbound EDI transactions.'],
+              ['Food Connex','Legacy / reference during transition','Historical data can be imported with provenance; Lucid does not write back to Food Connex.'],
+              ['QuickBooks','Accounting authority','Shipment invoice references are retained here; accounting and AR remain in QuickBooks.'],
+              ['Microsoft / SharePoint','Document authority','Governed document storage remains in SharePoint.'],
+              ['Supabase / Postgres','Lucid operational data platform','Organization-scoped operations, audit history, authentication, and messages are stored centrally.'],
             ].map(([name,status,desc]) => <div className="surface integration-card" key={name}><div className="integration-dot"/><div><strong>{name}</strong><span>{status}</span><small>{desc}</small></div></div>)}</div>
-            <div className="surface safe-panel"><strong>Safe mode is ON</strong><p>This build does not POST, acknowledge, invoice, ship or change any live SPS or Food Connex record.</p></div>
+            <div className="surface safe-panel"><strong>Operational safeguards</strong><p>Lucid writes only to its authenticated, organization-scoped operational records. It does not create or change Food Connex, QuickBooks, SharePoint, carrier, or SPS transactions from this workspace.</p></div>
           </>}
         </main>
       </div>
