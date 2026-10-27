@@ -1,0 +1,16 @@
+# Local environment files may contain Supabase, SPS, Food Connex, and other
+# deployment credentials. Keep the documented template versioned.
+.env
+.env.*
+!.env.example
+
+# Generated dependencies and Next.js build artifacts.
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Local deployment/editor/OS state.
+.vercel/
+.DS_Store
+.vscode/

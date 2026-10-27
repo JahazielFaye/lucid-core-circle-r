@@ -1,0 +1,2 @@
+import { NextResponse } from 'next/server'; import { mapItemException } from '@/lib/integrations/sps-mapping-resolution';
+export async function POST(r:Request,c:{params:Promise<{id:string}>}) { try { const b=await r.json(); return NextResponse.json({success:true,...await mapItemException((await c.params).id,b)}); } catch(e) { return NextResponse.json({success:false,error:e instanceof Error?e.message:'Unable to map item.'},{status:400}); } }
