@@ -8,9 +8,15 @@ import { createClient } from '@/utils/supabase/client';
 import { createDirectConversation, loadSharedMessaging, markSharedMessagesRead, sendSharedMessage, type SharedMessagingSnapshot } from '@/lib/supabase/messaging';
 import { openBrowserCaseLabel, startBrowserCaseLabelPrint, type CaseLabelData } from '@/lib/production/case-label';
 import { MasterDataSetup } from '@/components/master-data-setup';
+import { InventoryWorkspace } from '@/components/inventory-workspace';
+import { ProductionGenealogyWorkspace } from '@/components/production-genealogy-workspace';
+import { ShipmentWorkspace } from '@/components/shipment-workspace';
+import { HistoricalImportWorkspace } from '@/components/historical-import-workspace';
+import { OperationsReports } from '@/components/operations-reports';
+import { ReplacementReadiness } from '@/components/replacement-readiness';
 
 type Role = 'lucid_admin' | 'leadership' | 'office' | 'production';
-type Section = 'Home' | 'Orders' | 'Exceptions' | 'Production' | 'Inventory' | 'Pallets' | 'Shipments' | 'Trace' | 'Samples' | 'Documents' | 'Office' | 'Logistics' | 'Sales' | 'Roadmap' | 'MasterData' | 'System';
+type Section = 'Home' | 'Orders' | 'Exceptions' | 'Production' | 'Inventory' | 'Pallets' | 'Shipments' | 'Trace' | 'Reports' | 'Imports' | 'Samples' | 'Documents' | 'Office' | 'Logistics' | 'Sales' | 'Roadmap' | 'MasterData' | 'System';
 type Notice = { tone: 'success' | 'warning' | 'info'; message: string } | null;
 
 type UserRecord = {
@@ -34,9 +40,9 @@ type StagedOrder = { id:string; source_file:string|null; source_path:string|null
 type ProductionLine = UnifiedOrder['lines'][number] & { id: string; nativeItemId?: string | null; gtin?: string | null; lotCode?: string | null };
 type OperationalOrder = Omit<UnifiedOrder, 'lines'> & { operationalStatus: string; orderDate?: string; lines: ProductionLine[] };
 type ProductionLot = { id:string; organization_id:string; order_id:string; order_line_id:string; lot_code:string; status:'active'|'closed'; created_at:string };
-type ProductionCase = { id:string; order_id:string; order_line_id:string; production_lot_id:string|null; lot_code:string|null; pallet_id:string|null; case_identifier:string; quantity:number; net_weight:number|null; net_weight_uom:string; uom:string; status:'produced'|'palletized'|'shipped'|'voided'; produced_at:string; voided_at:string|null; void_reason:string|null; label_printed_at:string|null; label_print_count:number };
+type ProductionCase = { id:string; order_id:string; order_line_id:string; production_lot_id:string|null; production_run_id:string|null; output_inventory_lot_id:string|null; lot_code:string|null; pallet_id:string|null; case_identifier:string; quantity:number; net_weight:number|null; net_weight_uom:string; uom:string; status:'produced'|'palletized'|'shipped'|'voided'; produced_at:string; voided_at:string|null; void_reason:string|null; label_printed_at:string|null; label_print_count:number };
 type OperationalPallet = { id:string; order_id:string; pallet_identifier:string; status:'building'|'complete'|'shipped'|'voided'; created_at:string; created_by:string|null; created_by_name:string|null; completed_at:string|null; completed_by:string|null; completed_by_name:string|null; original_completed_at:string|null; original_completed_by:string|null; original_completed_by_name:string|null; reopened_at:string|null; reopened_by:string|null; reopened_by_name:string|null; reopen_reason:string|null };
-type PalletCaseAssignment = { id:string; pallet_id:string; production_case_id:string|null };
+type PalletCaseAssignment = { id:string; pallet_id:string; production_case_id:string|null; status:'active'|'removed' };
 type PalletActivity = { id:string; pallet_id:string; action:string; actor_name:string|null; created_at:string; details:unknown };
 
 function palletActivityCopy(action: string, details: unknown) {
@@ -141,10 +147,10 @@ const defaultUsers: UserRecord[] = [
 ];
 
 const roleSections: Record<Role, Section[]> = {
-  office: ['Home', 'Orders', 'Exceptions', 'Shipments', 'Trace', 'Samples', 'Documents', 'Office', 'Sales', 'MasterData'],
-  production: ['Home', 'Orders', 'Production', 'Inventory', 'Pallets', 'Trace'],
-  leadership: ['Home', 'Orders', 'Shipments', 'Inventory', 'Trace', 'Logistics', 'Sales', 'Roadmap', 'MasterData'],
-  lucid_admin: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Samples', 'Documents', 'Office', 'Logistics', 'Sales', 'Roadmap', 'MasterData', 'System'],
+  office: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Samples', 'Documents', 'Office', 'Sales', 'MasterData'],
+  production: ['Home', 'Orders', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace'],
+  leadership: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Logistics', 'Sales', 'Roadmap', 'MasterData'],
+  lucid_admin: ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Imports', 'Samples', 'Documents', 'Office', 'Logistics', 'Sales', 'Roadmap', 'MasterData', 'System'],
 };
 
 const roleLabels: Record<Role, string> = {
@@ -163,6 +169,8 @@ const sectionLabels: Record<Section, string> = {
   Pallets: 'Pallet Breakdown',
   Shipments: 'Advance Ship Notice',
   Trace: 'Trace / Recall',
+  Reports: 'Reports',
+  Imports: 'Historical Import',
   Samples: 'Samples / Rebuilds',
   Documents: 'Order Files / SharePoint',
   Office: 'Office Paperwork',
@@ -331,6 +339,8 @@ function SectionIcon({ name }: { name: Section }) {
     Pallets: <Grid3X3 {...iconProps} />,
     Shipments: <Truck {...iconProps} />,
     Trace: <ScanSearch {...iconProps} />,
+    Reports: <ChartNoAxesCombined {...iconProps} />,
+    Imports: <FolderOpen {...iconProps} />,
     Samples: <FlaskConical {...iconProps} />,
     Documents: <FolderOpen {...iconProps} />,
     Office: <ClipboardList {...iconProps} />,
@@ -354,6 +364,8 @@ function DashboardIcon({ target }: { target: Section }) {
     Pallets: <Grid3X3 {...iconProps} />,
     Shipments: <Truck {...iconProps} />,
     Trace: <ScanSearch {...iconProps} />,
+    Reports: <ChartNoAxesCombined {...iconProps} />,
+    Imports: <FolderOpen {...iconProps} />,
     Samples: <FlaskConical {...iconProps} />,
     Documents: <FolderOpen {...iconProps} />,
     Office: <ClipboardList {...iconProps} />,
@@ -429,7 +441,7 @@ export default function Home() {
     const restoreNavigation = () => {
       const params = new URLSearchParams(window.location.search);
       const view = params.get('view');
-      const validSections: Section[] = ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Samples', 'Documents', 'Office', 'Logistics', 'Sales', 'Roadmap', 'MasterData', 'System'];
+      const validSections: Section[] = ['Home', 'Orders', 'Exceptions', 'Production', 'Inventory', 'Pallets', 'Shipments', 'Trace', 'Reports', 'Imports', 'Samples', 'Documents', 'Office', 'Logistics', 'Sales', 'Roadmap', 'MasterData', 'System'];
       if (view === 'order-review') setWorkspaceSection('Exceptions', 'url restore');
       else if (view === 'PalletBreakdown') setWorkspaceSection('Pallets', 'url restore');
       else if (view && validSections.includes(view as Section)) setWorkspaceSection(view as Section, 'url restore');
@@ -636,7 +648,7 @@ export default function Home() {
       const [operationalLinesResult, productionCasesResult, productionLotsResult] = operationalOrderIds.length
         ? await Promise.all([
           supabase.from('order_lines').select('id, order_id, item_id, external_sku, vendor_item, internal_item_id, description, quantity_cases, unit_price, uom, gtin, lot_code, items(item_code, description, stock_uom, sell_uom, item_identifiers(identifier_type, identifier_value, is_primary, verified, status))').in('order_id', operationalOrderIds),
-          supabase.from('production_cases').select('id, order_id, order_line_id, production_lot_id, pallet_id, case_identifier, quantity, net_weight, net_weight_uom, uom, status, produced_at, voided_at, void_reason, label_printed_at, label_print_count, production_lots(lot_code)').in('order_id', operationalOrderIds).order('created_at', { ascending: false }),
+          supabase.from('production_cases').select('id, order_id, order_line_id, production_lot_id, production_run_id, output_inventory_lot_id, pallet_id, case_identifier, quantity, net_weight, net_weight_uom, uom, status, produced_at, voided_at, void_reason, label_printed_at, label_print_count, production_lots(lot_code)').in('order_id', operationalOrderIds).order('created_at', { ascending: false }),
           supabase.from('production_lots').select('id, organization_id, order_id, order_line_id, lot_code, status, created_at').in('order_id', operationalOrderIds).eq('status', 'active').order('created_at', { ascending: false }),
         ])
         : [{ data: [], error: null }, { data: [], error: null }, { data: [], error: null }];
@@ -713,8 +725,21 @@ export default function Home() {
       setOperationalPallets(pallets);
       const palletIds = pallets.map(pallet => pallet.id);
       if (palletIds.length) {
-        const { data, error } = await supabase.from('pallet_cases').select('id, pallet_id, production_case_id').in('pallet_id', palletIds);
-        if (!error) setPalletCaseAssignments((data || []) as PalletCaseAssignment[]);
+        const [legacyAssignmentsResult, durableAssignmentsResult] = await Promise.all([
+          supabase.from('pallet_cases').select('id, pallet_id, production_case_id').in('pallet_id', palletIds),
+          supabase.from('pallet_case_assignments').select('id, pallet_id, production_case_id, status').in('pallet_id', palletIds),
+        ]);
+        if (!legacyAssignmentsResult.error || !durableAssignmentsResult.error) {
+          const assignments = new Map<string, PalletCaseAssignment>();
+          for (const assignment of legacyAssignmentsResult.data || []) {
+            if (assignment.production_case_id) assignments.set(`${assignment.pallet_id}:${assignment.production_case_id}`, { ...assignment, status: 'active' });
+          }
+          // Durable assignments retain removal history and take precedence over the legacy live join.
+          for (const assignment of durableAssignmentsResult.data || []) {
+            if (assignment.production_case_id) assignments.set(`${assignment.pallet_id}:${assignment.production_case_id}`, assignment as PalletCaseAssignment);
+          }
+          setPalletCaseAssignments(Array.from(assignments.values()));
+        }
       } else {
         setPalletCaseAssignments([]);
       }
@@ -775,9 +800,9 @@ export default function Home() {
   const currentUserId = profile?.id || '';
   const visibleSections = roleSections[role];
   const mobileNavigationGroups = [
-    { label: 'Operations', sections: ['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace'] as Section[] },
+    { label: 'Operations', sections: ['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace','Reports'] as Section[] },
     { label: 'Records & growth', sections: ['Samples','Documents','Office','Logistics','Sales'] as Section[] },
-    { label: 'Management', sections: ['Roadmap','MasterData','System'] as Section[] },
+    { label: 'Management', sections: ['Roadmap','MasterData','Imports','System'] as Section[] },
   ];
   const mobilePrimarySections: Record<Role, Section[]> = {
     office: ['Home', 'Orders', 'Exceptions', 'Shipments'],
@@ -1295,11 +1320,11 @@ export default function Home() {
         <aside className="side-nav" aria-label="Main navigation">
           <nav>
             <span className="nav-group-label">Operations</span>
-            {(['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
+            {(['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace','Reports'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
             <span className="nav-group-label">Records & Growth</span>
             {(['Samples','Documents','Office','Logistics','Sales'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
             <span className="nav-group-label">Management</span>
-            {(['Roadmap','MasterData','System'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span></button>)}
+            {(['Roadmap','MasterData','Imports','System'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span></button>)}
           </nav>
           <div className="side-help"><strong>Need help?</strong><span>Lucid Core only shows the tools needed for your role.</span></div>
         </aside>
@@ -1373,6 +1398,8 @@ export default function Home() {
                 order={selectedProductionOrder}
                 cases={productionCases.filter(productionCase => productionCase.order_id === selectedProductionOrder.id)}
                 lots={productionLots.filter(productionLot => productionLot.order_id === selectedProductionOrder.id)}
+                organizationId={profile?.organization_id || ''}
+                role={role}
                 onBack={() => setSelectedProductionOrderId('')}
                 onRefresh={refreshStaging}
                 onStartPalletizing={() => setWorkspaceSection('Pallets', 'start palletizing')}
@@ -1394,10 +1421,20 @@ export default function Home() {
             {profile ? <PalletBreakdownHub orders={operationalOrders} pallets={operationalPallets} cases={productionCases} assignments={palletCaseAssignments} activities={palletActivities} role={role} selectedPallet={selectedOperationalPallet} onOpenPallet={id => setSelectedPalletId(id)} onClosePallet={() => setSelectedPalletId('')} onRefresh={refreshStaging} /> : <Empty title="Sign in to build pallets" text="Production pallet breakdowns are available to authenticated Lucid Core users." />}
           </>}
 
-          {section === 'Shipments' && <>
-            <div className="page-heading"><div><span className="kicker">Advance Ship Notice (ASN)</span><h1>Prepare the shipment information Crystal already uses.</h1><p>Completed Pallet Breakdowns roll into the Advance Ship Notice, with final case and weight information ready for review.</p></div></div>
-            <div className="surface list-surface">{activeOrders.map(order => { const ps = state.pallets.filter(p => p.orderId === order.id); const complete = ps.filter(p => p.status === 'complete').length; const actualWeight = ps.reduce((sum,p) => sum+p.weightLb,0); return <div className="shipment-row shipment-row-actions" key={order.id}><div><span className="row-label">PO</span><strong>{order.externalPo}</strong></div><div><span className="row-label">Destination</span><strong>{order.shipTo}</strong><small>{actualWeight.toFixed(2)} lb palletized</small></div><div><span className="row-label">Pallets</span><strong>{complete}/{ps.length || 0} complete</strong></div><div><span className={`status-chip ${ps.length && complete === ps.length ? 'ready' : 'progress'}`}>{ps.length && complete === ps.length ? 'Advance Ship Notice ready' : 'In progress'}</span></div><div className="report-actions compact"><button className="secondary" onClick={() => printStage('Shipment', order)}>Print</button><button className="secondary" onClick={() => saveReport('Shipment', order)}>Download</button></div></div>; })}</div>
-          </>}
+          {section === 'Shipments' && (profile
+            ? <ShipmentWorkspace
+                organizationId={profile.organization_id}
+                role={role}
+                orders={operationalOrders.map(order => ({
+                  id: order.id,
+                  po: order.externalPo,
+                  customer: order.customer,
+                  shipTo: order.shipTo,
+                  lines: order.lines.map(line => ({ id: line.id, itemCode: productionItemIdentifier(line), description: productionItemName(line), uom: line.uom, quantity: line.quantityCases })),
+                }))}
+              />
+            : <Empty title="Shipments are unavailable" text="Sign in with an active Lucid Core account to view shipment status." />
+          )}
 
           {section === 'Documents' && <>
             <div className="page-heading"><div><span className="kicker">Order Files</span><h1>One familiar packet per order.</h1><p>Keep the same records the team already recognizes: PO, Acknowledgment, Picking Ticket, Weight Report, Pallet Breakdown, Advance Ship Notice, Bill of Lading and Invoice.</p></div></div>
@@ -1407,15 +1444,19 @@ export default function Home() {
           </>}
 
 
-          {section === 'Inventory' && <>
-            <div className="page-heading"><div><span className="kicker">Inventory</span><h1>Keep a simple view of what is on hand.</h1><p>This starts as a lightweight visibility layer while Food Connex remains the inventory system of record. Records are editable so counts, lots and locations can be corrected.</p></div><button className="primary" onClick={addInventory}>+ Add inventory record</button></div>
-            <EditableGrid headers={['Item','Lot','Location','On hand','Unit','Notes','']} rows={state.inventory.map(r=>[<input value={r.item} onChange={e=>updateInventory(r.id,{item:e.target.value})}/>,<input value={r.lot||''} onChange={e=>updateInventory(r.id,{lot:e.target.value})}/>,<input value={r.location||''} onChange={e=>updateInventory(r.id,{location:e.target.value})}/>,<input inputMode="decimal" value={r.onHand} onChange={e=>updateInventory(r.id,{onHand:Number(e.target.value)||0})}/>,<input value={r.unit} onChange={e=>updateInventory(r.id,{unit:e.target.value})}/>,<input value={r.notes||''} onChange={e=>updateInventory(r.id,{notes:e.target.value})}/>,<button className="text-button danger-link" onClick={()=>removeInventory(r.id)}>Remove</button>])} empty="No inventory visibility records yet. Add one when you begin the inventory pilot." />
-          </>}
+          {section === 'Inventory' && (profile
+            ? <InventoryWorkspace organizationId={profile.organization_id} role={role} />
+            : <Empty title="Inventory is unavailable" text="Sign in with an active Lucid Core account to view inventory." />
+          )}
 
           {section === 'Trace' && <>
             <div className="page-heading"><div><span className="kicker">Trace / Recall</span><h1>Find the full path of an order, case or pallet.</h1><p>Search one place instead of chasing paper. This is designed for audit, recall and shipping questions.</p></div></div>
-            <TraceRecall state={state} />
+            <TraceRecall orders={operationalOrders} cases={productionCases} pallets={operationalPallets} assignments={palletCaseAssignments} />
           </>}
+
+          {section === 'Reports' && profile && <OperationsReports organizationId={profile.organization_id} role={role} onOpenTrace={() => setWorkspaceSection('Trace', 'reports trace link')} />}
+
+          {section === 'Imports' && profile && <HistoricalImportWorkspace role={role} />}
 
           {section === 'Samples' && <>
             <div className="page-heading"><div><span className="kicker">Samples / Rebuilds</span><h1>Keep sample and rebuild requests from getting lost.</h1><p>This is the Phase 1 quick win from the 90-day plan: owner, status, follow-up, shipment and notes in one simple tracker.</p></div><button className="primary" onClick={addSample}>+ Add request</button></div>
@@ -1447,6 +1488,7 @@ export default function Home() {
             <section className="surface roadmap-weeks"><div className="section-head"><div><span className="kicker">12-week rhythm</span><h2>Work scheduled around the project — not fixed shifts.</h2></div></div><div className="week-list">{[
               ['Week 1','Food Connex review + Samples / Rebuilds outline'],['Week 2','Food Connex solution + Order flow review'],['Week 3','Test Food Connex improvement + Inventory / Pallets'],['Week 4','Launch Samples / Rebuilds + design Pallet pilot'],['Week 5','Run Pallet / Inventory pilot + review order repeat work'],['Week 6','Adjust pilot + improve order flow + start SharePoint'],['Week 7','Build Order Files / SharePoint hub + review Office Paperwork'],['Week 8','Test SharePoint / office flow + training work'],['Week 9','Review Logistics + improve Leadership View'],['Week 10','Logistics recommendations + training presentation'],['Week 11','Review Sales / Food Show follow-up + build simple tracking'],['Week 12','Test final improvements + build next 90-day roadmap']
             ].map(([week,focus])=><div className="week-row" key={week}><strong>{week}</strong><span>{focus}</span></div>)}</div></section>
+            <ReplacementReadiness role={role} />
           </>}
 
           {section === 'MasterData' && profile && <MasterDataSetup organizationId={profile.organization_id} role={role} />}
@@ -1476,6 +1518,7 @@ export default function Home() {
             <div className="admin-subheading"><span className="kicker">Traceability</span><h2>Edit history</h2></div>
             <section className="surface audit-list">{state.audit.length ? state.audit.slice(0,20).map(event => <div className="audit-row" key={event.id}><div><strong>{event.action}</strong><span>{event.entity}</span></div><div><span>{event.user}</span><small>{new Date(event.at).toLocaleString()}</small></div><p>{event.detail}</p></div>) : <p className="muted-copy">Edits, reopen actions and confirmations will appear here.</p>}</section>
 
+
             <div className="admin-subheading"><span className="kicker">Connections</span><h2>Integration status</h2></div>
             <div className="integration-grid">{[
               ['SPS Commerce','Prototype adapter','Incoming orders / future EDI'],
@@ -1498,12 +1541,72 @@ export default function Home() {
 }
 
 
-function TraceRecall({ state }: { state: AppState }) {
-  const [query,setQuery]=useState('');
-  const q=query.trim().toLowerCase();
-  const orderMatches=state.orders.filter(o=>!q || [o.externalPo,o.customer,o.shipTo,o.foodConnexOrder,...o.lines.flatMap(l=>[l.externalSku,l.internalItemId,l.vendorItem,l.description])].filter(Boolean).some(v=>String(v).toLowerCase().includes(q)));
-  const palletMatches=state.pallets.filter(p=>!q || [p.label,...(p.cases||[]).flatMap(c=>[c.scannedCode,c.itemId,c.description])].filter(Boolean).some(v=>String(v).toLowerCase().includes(q)));
-  return <div className="trace-layout"><section className="surface trace-search"><div className="trace-searchbar"><Search size={18}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search PO, Food Connex order, item, case ID, pallet, customer…"/></div><div className="trace-summary"><span><strong>{orderMatches.length}</strong> Orders</span><span><strong>{palletMatches.length}</strong> Pallets</span><span><strong>{palletMatches.reduce((n,p)=>n+(p.cases?.length||0),0)}</strong> Cases</span></div></section>{(orderMatches.length||palletMatches.length)?<div className="trace-results">{orderMatches.map(o=><section className="surface trace-card" key={o.id}><div className="trace-card-head"><div><span className="kicker">Order chain</span><h2>PO {o.externalPo}</h2><p>{o.customer} · {o.shipTo}</p></div><span className="status-chip progress">{o.status}</span></div><div className="trace-flow"><span>SPS order</span><ChevronRight size={16}/><span>Food Connex {o.foodConnexOrder||'preview'}</span><ChevronRight size={16}/><span>{state.pallets.filter(p=>p.orderId===o.id).length} pallet(s)</span><ChevronRight size={16}/><span>ASN / shipment</span></div><div className="trace-detail">{o.lines.map(l=><div key={l.externalSku}><strong>{l.description}</strong><span>{l.internalItemId||'Unmapped'} · {l.quantityCases} {l.uom}</span></div>)}</div></section>)}{palletMatches.filter(p=>!orderMatches.some(o=>o.id===p.orderId)).map(p=><section className="surface trace-card" key={p.id}><h2>{p.label}</h2><p>{p.caseCount} cases · {p.weightLb.toFixed(2)} lb · {p.status}</p></section>)}</div>:<Empty title="No traceability match" text="Try a PO number, item, case label, pallet, customer, or Food Connex order number."/>}</div>;
+function TraceRecall({ orders, cases, pallets, assignments }: { orders: OperationalOrder[]; cases: ProductionCase[]; pallets: OperationalPallet[]; assignments: PalletCaseAssignment[] }) {
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const palletById = useMemo(() => new Map(pallets.map(pallet => [pallet.id, pallet])), [pallets]);
+  const activePalletByCaseId = useMemo(() => {
+    const result = new Map<string, OperationalPallet>();
+    for (const assignment of assignments) {
+      const pallet = assignment.production_case_id && assignment.status === 'active' ? palletById.get(assignment.pallet_id) : undefined;
+      if (assignment.production_case_id && pallet) result.set(assignment.production_case_id, pallet);
+    }
+    return result;
+  }, [assignments, palletById]);
+  const palletForCase = (productionCase: ProductionCase) =>
+    productionCase.pallet_id ? palletById.get(productionCase.pallet_id) || activePalletByCaseId.get(productionCase.id) : activePalletByCaseId.get(productionCase.id);
+  const casesForOrder = (orderId: string) => cases.filter(productionCase => productionCase.order_id === orderId);
+  const caseMatches = cases.filter(productionCase => !q || [
+    productionCase.case_identifier,
+    productionCase.lot_code,
+    palletForCase(productionCase)?.pallet_identifier,
+  ].filter(Boolean).some(value => String(value).toLowerCase().includes(q)));
+  const orderMatches = orders.filter(order => {
+    const orderCases = casesForOrder(order.id);
+    return !q || [
+      order.externalPo, order.customer, order.shipTo, order.foodConnexOrder,
+      ...order.lines.flatMap(line => [line.externalSku, line.internalItemId, line.vendorItem, line.description]),
+      ...orderCases.flatMap(productionCase => [productionCase.case_identifier, productionCase.lot_code, palletForCase(productionCase)?.pallet_identifier]),
+    ].filter(Boolean).some(value => String(value).toLowerCase().includes(q));
+  });
+  const visibleCases = q ? caseMatches : cases;
+  const activeCaseCount = visibleCases.filter(productionCase => productionCase.status !== 'voided').length;
+  const voidedCaseCount = visibleCases.length - activeCaseCount;
+  const palletMatches = pallets.filter(pallet => !q || [
+    pallet.pallet_identifier,
+    ...cases.filter(productionCase => palletForCase(productionCase)?.id === pallet.id).map(productionCase => productionCase.case_identifier),
+  ].filter(Boolean).some(value => String(value).toLowerCase().includes(q)));
+
+  return <div className="trace-layout">
+    <section className="surface trace-search">
+      <div className="trace-searchbar"><Search size={18}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search PO, item, case ID, pallet, customer, or ship-to…"/></div>
+      <div className="trace-summary"><span><strong>{orderMatches.length}</strong> Orders</span><span><strong>{palletMatches.length}</strong> Pallets</span><span><strong>{visibleCases.length}</strong> Cases</span><span><strong>{activeCaseCount}</strong> Active</span><span><strong>{voidedCaseCount}</strong> Voided</span></div>
+    </section>
+    {(orderMatches.length || palletMatches.length || caseMatches.length) ? <div className="trace-results">
+      {orderMatches.map(order => {
+        const orderCases = casesForOrder(order.id);
+        const activeCases = orderCases.filter(productionCase => productionCase.status !== 'voided');
+        const voidedCases = orderCases.filter(productionCase => productionCase.status === 'voided');
+        const orderPallets = Array.from(new Map(orderCases.map(palletForCase).filter((pallet): pallet is OperationalPallet => Boolean(pallet)).map(pallet => [pallet.id, pallet])).values());
+        return <section className="surface trace-card" key={order.id}>
+          <div className="trace-card-head"><div><span className="kicker">Order trace</span><h2>PO {order.externalPo}</h2><p>{order.customer} · {order.shipTo}</p></div><span className="status-chip progress">{order.operationalStatus.replaceAll('_', ' ')}</span></div>
+          <div className="trace-flow"><span>{order.source || 'Operational order'}</span><ChevronRight size={16}/><span>{activeCases.length} active case{activeCases.length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{orderPallets.length} pallet{orderPallets.length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{voidedCases.length} voided</span></div>
+          <div className="trace-detail">{order.lines.map(line => <div key={line.id}><strong>{productionItemName(line)}</strong><span>{productionItemIdentifier(line)} · {line.quantityCases} {line.uom}</span></div>)}</div>
+          <div className="trace-detail trace-case-list">{orderCases.length ? orderCases.map(productionCase => {
+            const pallet = palletForCase(productionCase);
+            return <div key={productionCase.id} className={productionCase.status === 'voided' ? 'voided' : ''}>
+              <strong>{productionCase.case_identifier}</strong>
+              <span>{productionCase.status === 'voided' ? `Voided${productionCase.void_reason ? ` · ${productionCase.void_reason}` : ''}` : 'Active'} · {productionCase.net_weight == null ? 'Weight unavailable' : `${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}`}{productionCase.lot_code ? ` · Prod Code ${productionCase.lot_code}` : ''}{pallet ? ` · Pallet ${pallet.pallet_identifier}` : ' · Not palletized'}</span>
+            </div>;
+          }) : <p className="muted-copy">No production cases have been recorded for this order.</p>}</div>
+        </section>;
+      })}
+      {palletMatches.filter(pallet => !orderMatches.some(order => order.id === pallet.order_id)).map(pallet => {
+        const palletCases = cases.filter(productionCase => palletForCase(productionCase)?.id === pallet.id);
+        return <section className="surface trace-card" key={pallet.id}><h2>{pallet.pallet_identifier}</h2><p>{palletCases.length} case{palletCases.length === 1 ? '' : 's'} · {pallet.status}</p></section>;
+      })}
+    </div> : <Empty title="No traceability match" text="Try a PO number, item, case label, pallet, customer, or ship-to."/>}
+  </div>;
 }
 
 function IncomingOrdersQueue({ orders, lines, exceptions, onOpenOrder }: {
@@ -1580,10 +1683,12 @@ function IncomingOrdersQueue({ orders, lines, exceptions, onOpenOrder }: {
   </section>;
 }
 
-function ProductionOrderWorkspace({ order, cases, lots, onBack, onRefresh, onStartPalletizing }: {
+function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, onBack, onRefresh, onStartPalletizing }: {
   order: OperationalOrder;
   cases: ProductionCase[];
   lots: ProductionLot[];
+  organizationId: string;
+  role: Role;
   onBack: () => void;
   onRefresh: () => Promise<void>;
   onStartPalletizing: () => void;
@@ -1730,6 +1835,15 @@ function ProductionOrderWorkspace({ order, cases, lots, onBack, onRefresh, onSta
       return <><article className={`production-line-card production-line-row ${weighModeLineId === line.id ? 'weighing' : ''}`} key={line.id}><div className="production-line-cell item-id"><small>Item ID</small><strong>{productionItemIdentifier(line)}</strong></div><div className="production-line-cell description"><small>Description</small><strong>{productionItemName(line)}</strong></div><div className="production-line-cell"><small>Ordered</small><strong>{line.quantityCases}</strong></div><div className="production-line-cell"><small>Produced</small><strong>{produced}</strong></div><div className="production-line-cell"><small>Remaining</small><strong>{remaining}</strong></div><div className="production-line-cell"><small>Total Weight</small><strong>{producedWeight ? `${producedWeight.toFixed(2)} lb` : '—'}</strong></div><div className="production-line-cell"><small>UOM</small><strong>{line.uom || '—'}</strong></div><div className="production-line-cell"><small>Lot / Prod Code</small><strong>{currentLot}</strong></div><div className="production-line-cell production-line-action"><small>Action</small>{order.operationalStatus === 'in_production' && <button type="button" className={weighModeLineId === line.id ? 'secondary' : 'primary'} disabled={saving || remaining === 0} title={remaining === 0 ? 'This item’s ordered quantity is complete.' : undefined} onClick={() => startWeighMode(line)}>{weighModeLineId === line.id ? 'In Weigh Mode' : remaining === 0 ? 'Item Complete' : 'Start Weigh Mode'}</button>}</div>{lineCases.length > 0 && <details className="production-case-history"><summary>{lineCases.length} case{lineCases.length === 1 ? '' : 's'}</summary><div>{lineCases.map(productionCase => <div key={productionCase.id} className={productionCase.status === 'voided' ? 'voided' : ''}><span>{productionCase.case_identifier}</span><strong>{productionCase.quantity} {productionCase.uom}{productionCase.net_weight != null ? ` · ${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}` : ''}</strong><small>{productionCase.status === 'voided' ? `Voided: ${productionCase.void_reason || 'Corrected'}` : `${new Date(productionCase.produced_at).toLocaleString()}${productionCase.lot_code ? ` · Prod Code ${productionCase.lot_code}` : ''} · ${productionCase.label_print_count ? `Label printed ${productionCase.label_print_count}×` : 'Label not printed'}`}</small>{productionCase.status !== 'voided' && <button type="button" className="text-button" disabled={saving} onClick={() => void printLabel(productionCase, line)}>{productionCase.label_print_count ? 'Reprint' : 'Print Label'}</button>}{order.operationalStatus === 'in_production' && productionCase.status !== 'voided' && <button type="button" className="text-button danger-link" disabled={saving} onClick={() => void voidCase(productionCase)}>Void</button>}</div>)}</div></details>}</article>{order.operationalStatus === 'in_production' && weighModeLineId === line.id && <section className="inline-weigh-mode" aria-labelledby={`weigh-mode-${line.id}`}><div><span className="kicker">Weigh Mode</span><h2 id={`weigh-mode-${line.id}`}>{productionItemIdentifier(line)} · {productionItemName(line)}</h2><p>Ordered {line.quantityCases} · Produced {produced} · Remaining {remaining} {line.uom}</p></div><div className="inline-weigh-form"><label><span>Lot / Prod Code</span><input list="active-production-lots" required value={weighModeLot} onChange={event => setWeighModeLot(event.target.value)} placeholder="Select or enter lot" /><datalist id="active-production-lots">{activeLotsForWeighMode.map(lot => <option key={lot.id} value={lot.lot_code} />)}</datalist></label><label className="weigh-mode-weight"><span>Current net weight (lb)</span><input ref={weightInputRef} required inputMode="decimal" value={netWeight} onChange={event => setNetWeight(event.target.value)} placeholder="e.g. 42.36" /></label><label><span>Case ID (optional)</span><input value={caseIdentifier} onChange={event => setCaseIdentifier(event.target.value)} placeholder="Generated automatically" /></label><button type="button" className="primary production-action" disabled={saving} onClick={() => void addCase()}>{saving ? 'Creating…' : 'Create Case & Print Label'}</button><button type="button" className="secondary" disabled={saving} onClick={endWeighMode}>End Weigh Mode</button></div></section>}</>;
     })}</section>
     <section className="production-summary-strip"><div><small>Total lines</small><strong>{order.lines.length}</strong></div><div><small>Ordered cases</small><strong>{orderedCases}</strong></div><div><small>Produced cases</small><strong>{producedCases}</strong></div><div><small>Remaining cases</small><strong>{remainingCases}</strong></div><div><small>Total weight</small><strong>{capturedWeight ? `${capturedWeight.toFixed(2)} lb` : '—'}</strong></div><div><small>Palletized</small><strong>{palletizedCases}</strong></div><div><small>Waiting for pallet</small><strong>{waitingForPalletCases}</strong></div><div className="production-summary-action">{order.operationalStatus === 'ready_for_production' && <button type="button" className="primary production-action" disabled={saving} onClick={() => void startProduction()}>{saving ? 'Starting…' : 'Start Production'}</button>}{order.operationalStatus === 'in_production' && <button type="button" className="primary production-action" disabled={saving || !allProduced} title={allProduced ? undefined : 'Finish every ordered quantity before completing production.'} onClick={() => void save(() => request(`/api/production/orders/${order.id}/complete`))}>{saving ? 'Completing…' : 'Complete Production'}</button>}{order.operationalStatus === 'production_complete' && <button type="button" className="primary production-action" onClick={onStartPalletizing}>Start Palletizing</button>}</div><span className="production-progress"><i style={{ width: `${progress}%` }} /></span></section>
+    <ProductionGenealogyWorkspace
+      organizationId={organizationId}
+      role={role}
+      orderId={order.id}
+      lines={order.lines.map(line => ({ id: line.id, itemCode: productionItemIdentifier(line), description: productionItemName(line), quantity: line.quantityCases, uom: line.uom }))}
+      lots={lots}
+      cases={cases}
+      onRefresh={onRefresh}
+    />
     </div>
   </section>;
 }
