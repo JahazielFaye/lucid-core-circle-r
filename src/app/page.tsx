@@ -14,6 +14,7 @@ import { ShipmentWorkspace } from '@/components/shipment-workspace';
 import { HistoricalImportWorkspace } from '@/components/historical-import-workspace';
 import { OperationsReports } from '@/components/operations-reports';
 import { ReplacementReadiness } from '@/components/replacement-readiness';
+import { ControlledQaOrderWorkspace } from '@/components/controlled-qa-order-workspace';
 
 type Role = 'lucid_admin' | 'leadership' | 'office' | 'production';
 type Section = 'Home' | 'Orders' | 'Exceptions' | 'Production' | 'Inventory' | 'Pallets' | 'Shipments' | 'Trace' | 'Reports' | 'Imports' | 'Samples' | 'Documents' | 'Office' | 'Logistics' | 'Sales' | 'Roadmap' | 'MasterData' | 'System';
@@ -38,7 +39,7 @@ type StagedLine = { id:string; staged_order_id:string; line_number:string|null; 
 type StagedException = { id:string; staged_order_id:string; staged_order_line_id:string|null; exception_code:string; severity:'info'|'warning'|'blocking'; field_name:string|null; message:string; suggested_actions:string[]; status:string; details?: unknown; resolution_action?:string|null; resolved_at?:string|null; resolved_by?:string|null; resolved_by_name?:string|null };
 type StagedOrder = { id:string; source_file:string|null; source_path:string|null; external_po:string; trading_partner_id:string|null; po_date:string|null; requested_ship_date:string|null; source_customer_name:string|null; source_ship_to_name:string|null; source_ship_to_code:string|null; mapping_status:string; review_status:string; promoted_order_id:string|null; created_at:string };
 type ProductionLine = UnifiedOrder['lines'][number] & { id: string; nativeItemId?: string | null; gtin?: string | null; lotCode?: string | null };
-type OperationalOrder = Omit<UnifiedOrder, 'lines'> & { operationalStatus: string; orderDate?: string; lines: ProductionLine[] };
+type OperationalOrder = Omit<UnifiedOrder, 'lines'> & { operationalStatus: string; orderDate?: string; sourceSystem?: string; lines: ProductionLine[] };
 type ProductionLot = { id:string; organization_id:string; order_id:string; order_line_id:string; lot_code:string; status:'active'|'closed'; created_at:string };
 type ProductionCase = { id:string; order_id:string; order_line_id:string; production_lot_id:string|null; production_run_id:string|null; output_inventory_lot_id:string|null; lot_code:string|null; pallet_id:string|null; case_identifier:string; quantity:number; net_weight:number|null; net_weight_uom:string; uom:string; status:'produced'|'palletized'|'shipped'|'voided'; produced_at:string; voided_at:string|null; void_reason:string|null; label_printed_at:string|null; label_print_count:number };
 type OperationalPallet = { id:string; order_id:string; pallet_identifier:string; status:'building'|'complete'|'shipped'|'voided'; created_at:string; created_by:string|null; created_by_name:string|null; completed_at:string|null; completed_by:string|null; completed_by_name:string|null; original_completed_at:string|null; original_completed_by:string|null; original_completed_by_name:string|null; reopened_at:string|null; reopened_by:string|null; reopened_by_name:string|null; reopen_reason:string|null };
@@ -599,7 +600,7 @@ export default function Home() {
       supabase.from('sps_staged_order_lines').select('id, staged_order_id, line_number, buyer_part_number, vendor_item, gtin, description, quantity, sps_uom, sps_purchase_price, mapped_food_connex_item_number, approved_circle_r_price, item_mapping_status, price_status, uom_status').eq('organization_id', profile.organization_id),
       supabase.from('sps_order_exceptions').select('id, staged_order_id, staged_order_line_id, exception_code, severity, field_name, message, suggested_actions, status, details, resolution_action, resolved_at, resolved_by').eq('organization_id', profile.organization_id),
       supabase.from('profiles').select('id, display_name').eq('organization_id', profile.organization_id),
-      supabase.from('orders').select('id, external_po, customer, ship_to, customer_id, ship_to_id, source, requested_ship_date, requested_delivery_date, ordered_weight_lb, status, food_connex_order, created_at, customers(name), customer_ship_tos(name, location_code)').eq('organization_id', profile.organization_id).in('status', ['ready_for_production', 'in_production', 'production_complete']).order('promoted_at', { ascending: false }),
+      supabase.from('orders').select('id, external_po, customer, ship_to, customer_id, ship_to_id, source, source_system, requested_ship_date, requested_delivery_date, ordered_weight_lb, status, food_connex_order, created_at, customers(name), customer_ship_tos(name, location_code)').eq('organization_id', profile.organization_id).in('status', ['ready_for_production', 'in_production', 'production_complete']).order('promoted_at', { ascending: false }),
       supabase.from('pallets').select('id, order_id, pallet_identifier, status, created_at, created_by, completed_at, completed_by, original_completed_at, original_completed_by, reopened_at, reopened_by, reopen_reason').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }),
       supabase.from('audit_events').select('id, actor_id, action, entity_id, details, created_at').eq('organization_id', profile.organization_id).eq('entity_type', 'pallet').order('created_at', { ascending: false }).limit(200),
     ]);
@@ -643,6 +644,7 @@ export default function Home() {
           orderDate: order.created_at || undefined,
           orderedWeightLb: order.ordered_weight_lb == null ? undefined : Number(order.ordered_weight_lb),
           source: order.source?.toLowerCase() === 'sps' ? 'SPS' : 'Other',
+          sourceSystem: order.source_system || 'lucid_core',
           foodConnexOrder: order.food_connex_order || undefined,
           status: 'production',
           operationalStatus: order.status,
@@ -1289,6 +1291,16 @@ export default function Home() {
 
           {section === 'Orders' && <>
             <div className="page-heading"><div><span className="kicker">Incoming Orders</span><h1>One clear place to check incoming orders.</h1><p>Review what needs attention, then keep ready orders together for the next approved step.</p></div>{role === 'lucid_admin' && <button className="secondary" onClick={() => void importSandboxOrders()}>Refresh SPS Sandbox test orders</button>}</div>
+            {profile && <ControlledQaOrderWorkspace
+              organizationId={profile.organization_id}
+              role={role}
+              qaOrders={operationalOrders.filter(order => order.sourceSystem === 'lucid_qa').map(order => ({ id: order.id, externalPo: order.externalPo, operationalStatus: order.operationalStatus }))}
+              onCreated={refreshStaging}
+              onOpenProduction={(orderId) => {
+                setSelectedProductionOrderId(orderId);
+                setWorkspaceSection('Production', 'controlled QA order created');
+              }}
+            />}
             <IncomingOrdersQueue orders={activeStagedOrders} lines={stagedLines} exceptions={stagedExceptions} onOpenOrder={id => { setSelectedStagedOrderId(id); setWorkspaceSection('Exceptions', 'incoming order'); }} />
           </>}
 
@@ -1341,7 +1353,7 @@ export default function Home() {
                 const orderedCases = totalCases(order);
                 const progress = orderedCases ? Math.min(100, Math.round((producedCases / orderedCases) * 100)) : 0;
                 const statusLabel = order.operationalStatus === 'ready_for_production' ? 'Ready to start' : order.operationalStatus === 'in_production' ? 'In production' : 'Production complete';
-                return <div className="production-job" key={order.id}><div><span className={`status-chip ${order.operationalStatus === 'production_complete' ? 'ready' : order.operationalStatus === 'in_production' ? 'progress' : 'needs'}`}>{statusLabel}</span><h2>PO {order.externalPo}</h2><p>{order.customer} · {order.shipTo} · Needed {order.requestedShipDate || 'Not specified'}</p></div><div className="line-summary"><strong>{orderedCases} cases ordered · {producedCases} produced</strong>{order.lines.map(line => <small key={line.id}>{line.quantityCases} {line.uom} · {productionItemName(line)}</small>)}<span className="production-progress"><i style={{ width: `${progress}%` }} /></span><small>{progress}% complete</small></div><div className="job-actions"><button type="button" className="primary" onClick={() => setSelectedProductionOrderId(order.id)}>Open Production Order</button></div></div>;
+                return <div className="production-job" key={order.id}><div><span className={`status-chip ${order.operationalStatus === 'production_complete' ? 'ready' : order.operationalStatus === 'in_production' ? 'progress' : 'needs'}`}>{statusLabel}</span>{order.sourceSystem === 'lucid_qa' && <span className="status-chip progress">TEST / QA</span>}<h2>PO {order.externalPo}</h2><p>{order.customer} · {order.shipTo} · Needed {order.requestedShipDate || 'Not specified'}</p></div><div className="line-summary"><strong>{orderedCases} cases ordered · {producedCases} produced</strong>{order.lines.map(line => <small key={line.id}>{line.quantityCases} {line.uom} · {productionItemName(line)}</small>)}<span className="production-progress"><i style={{ width: `${progress}%` }} /></span><small>{progress}% complete</small></div><div className="job-actions"><button type="button" className="primary" onClick={() => setSelectedProductionOrderId(order.id)}>Open Production Order</button></div></div>;
               })}{!operationalOrders.length && <Empty title="No production orders are scheduled" text="Approved orders will appear here when they are ready for production." />}</div>
             </>}
           </>}
@@ -1498,8 +1510,8 @@ function TraceRecall({ orders, cases, pallets, assignments }: { orders: Operatio
         const voidedCases = orderCases.filter(productionCase => productionCase.status === 'voided');
         const orderPallets = Array.from(new Map(orderCases.map(palletForCase).filter((pallet): pallet is OperationalPallet => Boolean(pallet)).map(pallet => [pallet.id, pallet])).values());
         return <section className="surface trace-card" key={order.id}>
-          <div className="trace-card-head"><div><span className="kicker">Order trace</span><h2>PO {order.externalPo}</h2><p>{order.customer} · {order.shipTo}</p></div><span className="status-chip progress">{order.operationalStatus.replaceAll('_', ' ')}</span></div>
-          <div className="trace-flow"><span>{order.source || 'Operational order'}</span><ChevronRight size={16}/><span>{activeCases.length} active case{activeCases.length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{orderPallets.length} pallet{orderPallets.length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{voidedCases.length} voided</span></div>
+          <div className="trace-card-head"><div><span className="kicker">Order trace</span><h2>PO {order.externalPo}</h2><p>{order.customer} · {order.shipTo}</p></div><div>{order.sourceSystem === 'lucid_qa' && <span className="status-chip progress">TEST / QA</span>}<span className="status-chip progress">{order.operationalStatus.replaceAll('_', ' ')}</span></div></div>
+          <div className="trace-flow"><span>{order.sourceSystem === 'lucid_qa' ? 'Controlled QA' : order.source || 'Operational order'}</span><ChevronRight size={16}/><span>{activeCases.length} active case{activeCases.length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{orderPallets.length} pallet{orderPallets.length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{voidedCases.length} voided</span></div>
           <div className="trace-detail">{order.lines.map(line => <div key={line.id}><strong>{productionItemName(line)}</strong><span>{productionItemIdentifier(line)} · {line.quantityCases} {line.uom}</span></div>)}</div>
           <div className="trace-detail trace-case-list">{orderCases.length ? orderCases.map(productionCase => {
             const pallet = palletForCase(productionCase);
@@ -1730,7 +1742,7 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
     <button type="button" className="text-button" onClick={onBack}>← Back to production queue</button>
     <div className="production-workbench surface">
     <header className="production-po-header">
-      <div className="production-po-title"><span className="kicker">Production PO</span><h1>PO {order.externalPo}</h1><span className={`status-chip ${order.operationalStatus === 'production_complete' ? 'ready' : order.operationalStatus === 'in_production' ? 'progress' : 'needs'}`}>{statusLabel}</span></div>
+      <div className="production-po-title"><span className="kicker">Production PO</span><h1>PO {order.externalPo}</h1><span className={`status-chip ${order.operationalStatus === 'production_complete' ? 'ready' : order.operationalStatus === 'in_production' ? 'progress' : 'needs'}`}>{statusLabel}</span>{order.sourceSystem === 'lucid_qa' && <span className="status-chip progress">TEST / QA</span>}</div>
       <dl className="production-po-details"><div><dt>Customer</dt><dd>{order.customer || 'Not specified'}</dd></div><div><dt>Ship-to</dt><dd>{order.shipTo || 'Not specified'}</dd></div><div><dt>Needed date</dt><dd>{order.requestedShipDate || 'Not specified'}</dd></div><div><dt>Warehouse</dt><dd>Not specified</dd></div><div><dt>Order date</dt><dd>{order.orderDate ? new Date(order.orderDate).toLocaleDateString() : 'Not specified'}</dd></div><div><dt>Total lines</dt><dd>{order.lines.length}</dd></div><div><dt>Total ordered cases</dt><dd>{orderedCases}</dd></div></dl>
     </header>
     {error && <p className="production-workspace-error" role="alert">{error}</p>}
