@@ -8,7 +8,7 @@ export class OperationalWorkflowAuthError extends Error {}
 type WorkflowAction =
   | 'create_receipt' | 'append_receipt_line' | 'post_inventory_transaction' | 'create_production_run'
   | 'record_consumption' | 'record_output' | 'link_case' | 'create_shipment'
-  | 'allocate_case' | 'remove_allocation' | 'add_shipment_case' | 'add_shipment_pallet' | 'complete_shipment';
+  | 'reverse_consumption' | 'allocate_case' | 'remove_allocation' | 'add_shipment_case' | 'add_shipment_pallet' | 'complete_shipment';
 
 const roleByAction: Record<WorkflowAction, string[]> = {
   create_receipt: ['office', 'leadership', 'lucid_admin'],
@@ -16,6 +16,7 @@ const roleByAction: Record<WorkflowAction, string[]> = {
   post_inventory_transaction: ['office', 'leadership', 'lucid_admin'],
   create_production_run: ['production', 'office', 'leadership', 'lucid_admin'],
   record_consumption: ['production', 'office', 'leadership', 'lucid_admin'],
+  reverse_consumption: ['office', 'leadership', 'lucid_admin'],
   record_output: ['production', 'office', 'leadership', 'lucid_admin'],
   link_case: ['production', 'office', 'leadership', 'lucid_admin'],
   allocate_case: ['office', 'leadership', 'lucid_admin'],
@@ -96,7 +97,8 @@ export async function runOperationalWorkflow(action: string, body: Record<string
     case 'append-receipt-line': return rpc('append_receipt_line', 'append_lucid_receipt_line', { p_transaction_id: string(body.transactionId, 'Receipt'), p_item_id: string(body.itemCode, 'Item code'), p_lot_code: string(body.lotCode, 'Lot code'), p_quantity: numeric(body.quantity, 'Quantity'), p_quantity_uom: string(body.uom, 'UOM'), p_net_weight: numeric(body.netWeight, 'Net weight', true), p_weight_uom: string(body.weightUom, 'Weight UOM', true), p_internal_lot_number: string(body.internalLot, 'Internal lot', true), p_unit_cost: numeric(body.unitCost, 'Unit cost', true), p_charge: numeric(body.charge, 'Charge', true) ?? 0 });
     case 'post-inventory': return rpc('post_inventory_transaction', 'post_lucid_inventory_transaction', { p_transaction_id: string(body.transactionId, 'Inventory transaction') });
     case 'create-production-run': return rpc('create_production_run', 'create_lucid_production_run', { p_order_id: string(body.orderId, 'Order'), p_output_production_lot_id: string(body.productionLotId, 'Production lot'), p_output_item_id: string(body.itemCode, 'Item code'), p_reference: string(body.reference, 'Reference', true) });
-    case 'record-consumption': return rpc('record_consumption', 'record_lucid_production_consumption', { p_production_run_id: string(body.productionRunId, 'Production run'), p_inventory_lot_id: string(body.inventoryLotId, 'Inventory lot'), p_item_id: string(body.itemCode, 'Item code'), p_quantity: numeric(body.quantity, 'Quantity'), p_quantity_uom: string(body.uom, 'UOM', true), p_net_weight: numeric(body.netWeight, 'Net weight', true), p_weight_uom: string(body.weightUom, 'Weight UOM', true) });
+    case 'record-consumption': return rpc('record_consumption', 'record_lucid_production_consumption', { p_production_run_id: string(body.productionRunId, 'Production run'), p_inventory_lot_id: string(body.inventoryLotId, 'Inventory lot'), p_item_id: string(body.itemCode, 'Item code'), p_quantity: numeric(body.quantity, 'Quantity'), p_quantity_uom: string(body.uom, 'UOM'), p_net_weight: numeric(body.netWeight, 'Net weight', true), p_weight_uom: string(body.weightUom, 'Weight UOM', true), p_idempotency_key: string(body.operationKey, 'Consumption operation key') });
+    case 'reverse-consumption': return rpc('reverse_consumption', 'reverse_lucid_production_consumption', { p_production_consumption_id: string(body.productionConsumptionId, 'Production consumption'), p_reason: string(body.reason, 'Reversal reason') });
     case 'record-output': return rpc('record_output', 'record_lucid_production_output', { p_production_run_id: string(body.productionRunId, 'Production run'), p_item_id: string(body.itemCode, 'Item code'), p_quantity: numeric(body.quantity, 'Quantity'), p_quantity_uom: string(body.uom, 'UOM', true), p_weight: numeric(body.weight, 'Weight', true), p_weight_uom: string(body.weightUom, 'Weight UOM', true) });
     case 'link-case': return rpc('link_case', 'link_lucid_case_to_production_run', { p_production_case_id: string(body.productionCaseId, 'Production case'), p_production_run_id: string(body.productionRunId, 'Production run') });
     case 'allocate-case': return rpc('allocate_case', 'allocate_lucid_case', { p_order_id: string(body.orderId, 'Order'), p_order_line_id: string(body.orderLineId, 'Order line'), p_production_case_id: string(body.productionCaseId, 'Production case') });
