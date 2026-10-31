@@ -289,14 +289,14 @@ end; $$;
 create or replace function create_lucid_shipment(p_order_id uuid, p_bol_reference text default null, p_carrier_name text default null, p_carrier_reference text default null)
 returns table (shipment_id uuid)
 language plpgsql security invoker set search_path = public as $$
-declare actor profiles%rowtype; shipment_id uuid;
+declare actor profiles%rowtype; v_shipment_id uuid;
 begin
   actor := lucid_operational_actor(array['office','leadership','lucid_admin']);
   insert into shipments (organization_id, order_id, customer_id, ship_to_id, bol_reference, carrier_name, carrier_reference, status, source_system, created_by)
-  select actor.organization_id, o.id, o.customer_id, o.ship_to_id, nullif(btrim(p_bol_reference), ''), nullif(btrim(p_carrier_name), ''), nullif(btrim(p_carrier_reference), ''), 'building', 'lucid_core', actor.id from orders o where o.id = p_order_id and o.organization_id = actor.organization_id returning id into shipment_id;
-  if shipment_id is null then raise exception 'Order was not found.'; end if;
-  insert into audit_events (organization_id, actor_id, action, entity_type, entity_id, details) values (actor.organization_id, actor.id, 'created shipment', 'shipment', shipment_id::text, jsonb_build_object('order_id', p_order_id));
-  return query select shipment_id;
+  select actor.organization_id, o.id, o.customer_id, o.ship_to_id, nullif(btrim(p_bol_reference), ''), nullif(btrim(p_carrier_name), ''), nullif(btrim(p_carrier_reference), ''), 'building', 'lucid_core', actor.id from orders o where o.id = p_order_id and o.organization_id = actor.organization_id returning id into v_shipment_id;
+  if v_shipment_id is null then raise exception 'Order was not found.'; end if;
+  insert into audit_events (organization_id, actor_id, action, entity_type, entity_id, details) values (actor.organization_id, actor.id, 'created shipment', 'shipment', v_shipment_id::text, jsonb_build_object('order_id', p_order_id));
+  return query select v_shipment_id;
 end; $$;
 
 -- Shipment records use the same organization RLS as the traceability
@@ -379,8 +379,8 @@ begin
   if not found then raise exception 'Shipment was not found.'; end if;
   if completed.status = 'completed' then return query select completed.id, completed.status; return; end if;
   if nullif(btrim(completed.bol_reference), '') is null then raise exception 'A BOL reference is required before completing a shipment.'; end if;
-  if not exists (select 1 from shipment_contents where shipment_id = completed.id and organization_id = actor.organization_id and status = 'active') then raise exception 'Add at least one case or pallet before completing shipment.'; end if;
-  update shipments set status = 'completed', shipped_at = now(), completed_by = actor.id, invoice_number = coalesce(nullif(btrim(p_invoice_number), ''), invoice_number), external_accounting_id = coalesce(nullif(btrim(p_external_accounting_id), ''), external_accounting_id), invoice_status = coalesce(nullif(btrim(p_invoice_status), ''), invoice_status) where id = completed.id returning * into completed;
+  if not exists (select 1 from shipment_contents as content_row where content_row.shipment_id = completed.id and content_row.organization_id = actor.organization_id and content_row.status = 'active') then raise exception 'Add at least one case or pallet before completing shipment.'; end if;
+  update shipments as shipment_row set status = 'completed', shipped_at = now(), completed_by = actor.id, invoice_number = coalesce(nullif(btrim(p_invoice_number), ''), shipment_row.invoice_number), external_accounting_id = coalesce(nullif(btrim(p_external_accounting_id), ''), shipment_row.external_accounting_id), invoice_status = coalesce(nullif(btrim(p_invoice_status), ''), shipment_row.invoice_status) where shipment_row.id = completed.id returning shipment_row.* into completed;
   insert into audit_events (organization_id, actor_id, action, entity_type, entity_id, details) values (actor.organization_id, actor.id, 'completed shipment', 'shipment', completed.id::text, jsonb_build_object('bol_reference', completed.bol_reference, 'invoice_number', completed.invoice_number));
   return query select completed.id, completed.status;
 end; $$;

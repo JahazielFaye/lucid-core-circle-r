@@ -1392,7 +1392,7 @@ export default function Home() {
 
           {section === 'Trace' && <>
             <div className="page-heading"><div><span className="kicker">Trace / Recall</span><h1>Find the full path of an order, case or pallet.</h1><p>Search one place instead of chasing paper. This is designed for audit, recall and shipping questions.</p></div></div>
-            <TraceRecall orders={operationalOrders} cases={productionCases} pallets={operationalPallets} assignments={palletCaseAssignments} />
+            <TraceRecall organizationId={profile?.organization_id || ''} orders={operationalOrders} cases={productionCases} pallets={operationalPallets} assignments={palletCaseAssignments} />
           </>}
 
           {section === 'Reports' && profile && <OperationsReports organizationId={profile.organization_id} role={role} onOpenTrace={() => setWorkspaceSection('Trace', 'reports trace link')} />}
@@ -1462,48 +1462,98 @@ export default function Home() {
 }
 
 
-function TraceRecall({ orders, cases, pallets, assignments }: { orders: OperationalOrder[]; cases: ProductionCase[]; pallets: OperationalPallet[]; assignments: PalletCaseAssignment[] }) {
+function TraceRecall({ organizationId, orders, cases, pallets, assignments }: { organizationId: string; orders: OperationalOrder[]; cases: ProductionCase[]; pallets: OperationalPallet[]; assignments: PalletCaseAssignment[] }) {
   const [query, setQuery] = useState('');
+  const supabase = useMemo(() => createClient(), []);
+  const [traceLinks, setTraceLinks] = useState<Record<string, any[]>>({ inventoryLots: [], runs: [], consumptions: [], outputs: [], productionLots: [], cases: [], allocations: [], palletAssignments: [], shipments: [], shipmentContents: [] });
+  useEffect(() => {
+    if (!organizationId) return;
+    let active = true;
+    const loadTraceLinks = async () => {
+      const results = await Promise.all([
+        supabase.from('inventory_lots').select('id,lot_code,internal_lot_number,item_id,received_date,status').eq('organization_id', organizationId),
+        supabase.from('production_runs').select('id,order_id,production_reference,output_production_lot_id,status').eq('organization_id', organizationId),
+        supabase.from('production_run_consumptions').select('production_run_id,source_inventory_lot_id,item_id,quantity,quantity_uom,net_weight,weight_uom').eq('organization_id', organizationId),
+        supabase.from('production_run_outputs').select('production_run_id,output_production_lot_id,produced_quantity,quantity_uom,produced_weight,weight_uom').eq('organization_id', organizationId),
+        supabase.from('production_lots').select('id,lot_code,order_id').eq('organization_id', organizationId),
+        supabase.from('production_cases').select('id,order_id,order_line_id,production_lot_id,production_run_id,output_inventory_lot_id,pallet_id,case_identifier,quantity,net_weight,net_weight_uom,uom,status,produced_at,voided_at,void_reason,production_lots(lot_code)').eq('organization_id', organizationId),
+        supabase.from('case_pick_allocations').select('id,order_id,order_line_id,production_case_id,status,allocated_at,removed_at,removal_reason').eq('organization_id', organizationId),
+        supabase.from('pallet_case_assignments').select('id,pallet_id,production_case_id,status').eq('organization_id', organizationId),
+        supabase.from('shipments').select('id,order_id,bol_reference,status,shipped_at').eq('organization_id', organizationId),
+        supabase.from('shipment_contents').select('shipment_id,production_case_id,pallet_id,status').eq('organization_id', organizationId),
+      ]);
+      if (!active || results.some(result => result.error)) return;
+      setTraceLinks({ inventoryLots: results[0].data || [], runs: results[1].data || [], consumptions: results[2].data || [], outputs: results[3].data || [], productionLots: results[4].data || [], cases: results[5].data || [], allocations: results[6].data || [], palletAssignments: results[7].data || [], shipments: results[8].data || [], shipmentContents: results[9].data || [] });
+    };
+    void loadTraceLinks();
+    return () => { active = false; };
+  }, [organizationId, supabase]);
   const q = query.trim().toLowerCase();
+  const allCases = traceLinks.cases.length ? traceLinks.cases as ProductionCase[] : cases;
+  const allAssignments = traceLinks.palletAssignments.length ? [...assignments, ...traceLinks.palletAssignments] : assignments;
   const palletById = useMemo(() => new Map(pallets.map(pallet => [pallet.id, pallet])), [pallets]);
   const activePalletByCaseId = useMemo(() => {
     const result = new Map<string, OperationalPallet>();
-    for (const assignment of assignments) {
+    for (const assignment of allAssignments) {
       const pallet = assignment.production_case_id && assignment.status === 'active' ? palletById.get(assignment.pallet_id) : undefined;
       if (assignment.production_case_id && pallet) result.set(assignment.production_case_id, pallet);
     }
     return result;
-  }, [assignments, palletById]);
+  }, [allAssignments, palletById]);
   const palletForCase = (productionCase: ProductionCase) =>
-    productionCase.pallet_id ? palletById.get(productionCase.pallet_id) || activePalletByCaseId.get(productionCase.id) : activePalletByCaseId.get(productionCase.id);
-  const casesForOrder = (orderId: string) => cases.filter(productionCase => productionCase.order_id === orderId);
-  const caseMatches = cases.filter(productionCase => !q || [
+    activePalletByCaseId.get(productionCase.id) || (productionCase.pallet_id ? palletById.get(productionCase.pallet_id) : undefined);
+  const casesForOrder = (orderId: string) => allCases.filter(productionCase => productionCase.order_id === orderId);
+  const inputLotMatches = q ? traceLinks.inventoryLots.filter(lot => [lot.lot_code, lot.internal_lot_number].filter(Boolean).some(value => String(value).toLowerCase().includes(q))) : [];
+  const productionLotMatches = q ? traceLinks.productionLots.filter(lot => String(lot.lot_code || '').toLowerCase().includes(q)) : [];
+  const tracedRunIds = new Set([
+    ...traceLinks.consumptions.filter(row => inputLotMatches.some(lot => lot.id === row.source_inventory_lot_id)).map(row => row.production_run_id),
+    ...traceLinks.runs.filter(run => productionLotMatches.some(lot => lot.id === run.output_production_lot_id)).map(run => run.id),
+  ]);
+  const tracedRuns = traceLinks.runs.filter(run => tracedRunIds.has(run.id));
+  const tracedCaseIds = new Set(allCases.filter(productionCase => productionCase.production_run_id && tracedRunIds.has(productionCase.production_run_id)).map(productionCase => productionCase.id));
+  const tracedOrderIds = new Set(tracedRuns.map(run => run.order_id));
+  const caseMatches = allCases.filter(productionCase => !q || tracedCaseIds.has(productionCase.id) || [
     productionCase.case_identifier,
     productionCase.lot_code,
     palletForCase(productionCase)?.pallet_identifier,
   ].filter(Boolean).some(value => String(value).toLowerCase().includes(q)));
   const orderMatches = orders.filter(order => {
     const orderCases = casesForOrder(order.id);
-    return !q || [
+    return !q || tracedOrderIds.has(order.id) || [
       order.externalPo, order.customer, order.shipTo, order.foodConnexOrder,
       ...order.lines.flatMap(line => [line.externalSku, line.internalItemId, line.vendorItem, line.description]),
       ...orderCases.flatMap(productionCase => [productionCase.case_identifier, productionCase.lot_code, palletForCase(productionCase)?.pallet_identifier]),
     ].filter(Boolean).some(value => String(value).toLowerCase().includes(q));
   });
-  const visibleCases = q ? caseMatches : cases;
+  const visibleCases = q ? caseMatches : allCases;
   const activeCaseCount = visibleCases.filter(productionCase => productionCase.status !== 'voided').length;
   const voidedCaseCount = visibleCases.length - activeCaseCount;
-  const palletMatches = pallets.filter(pallet => !q || [
+  const palletMatches = pallets.filter(pallet => !q || tracedCaseIds.size > 0 && allCases.some(productionCase => tracedCaseIds.has(productionCase.id) && palletForCase(productionCase)?.id === pallet.id) || [
     pallet.pallet_identifier,
-    ...cases.filter(productionCase => palletForCase(productionCase)?.id === pallet.id).map(productionCase => productionCase.case_identifier),
+    ...allCases.filter(productionCase => palletForCase(productionCase)?.id === pallet.id).map(productionCase => productionCase.case_identifier),
   ].filter(Boolean).some(value => String(value).toLowerCase().includes(q)));
 
   return <div className="trace-layout">
     <section className="surface trace-search">
-      <div className="trace-searchbar"><Search size={18}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search PO, item, case ID, pallet, customer, or ship-to…"/></div>
+      <div className="trace-searchbar"><Search size={18}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search PO, inventory lot, Prod Code, case ID, pallet, shipment, customer, or ship-to…"/></div>
       <div className="trace-summary"><span><strong>{orderMatches.length}</strong> Orders</span><span><strong>{palletMatches.length}</strong> Pallets</span><span><strong>{visibleCases.length}</strong> Cases</span><span><strong>{activeCaseCount}</strong> Active</span><span><strong>{voidedCaseCount}</strong> Voided</span></div>
     </section>
-    {(orderMatches.length || palletMatches.length || caseMatches.length) ? <div className="trace-results">
+    {(orderMatches.length || palletMatches.length || caseMatches.length || tracedRuns.length) ? <div className="trace-results">
+      {tracedRuns.map(run => {
+        const runInputs = traceLinks.consumptions.filter(row => row.production_run_id === run.id);
+        const runOutputs = traceLinks.outputs.filter(row => row.production_run_id === run.id);
+        const runCases = allCases.filter(productionCase => productionCase.production_run_id === run.id);
+        const runPallets = Array.from(new Map(runCases.map(palletForCase).filter((pallet): pallet is OperationalPallet => Boolean(pallet)).map(pallet => [pallet.id, pallet])).values());
+        const runShipments = traceLinks.shipments.filter(shipment => traceLinks.shipmentContents.some(content => content.shipment_id === shipment.id && content.status === 'active' && (runPallets.some(pallet => pallet.id === content.pallet_id) || runCases.some(productionCase => productionCase.id === content.production_case_id))));
+        const outputLot = traceLinks.productionLots.find(lot => lot.id === run.output_production_lot_id);
+        const runOrder = orders.find(order => order.id === run.order_id);
+        return <section className="surface trace-card" key={`run-${run.id}`}>
+          <div className="trace-card-head"><div><span className="kicker">Lot genealogy</span><h2>{runInputs.map(row => traceLinks.inventoryLots.find(lot => lot.id === row.source_inventory_lot_id)?.lot_code).filter(Boolean).join(', ') || outputLot?.lot_code || 'Production run'}</h2><p>{runOrder ? `PO ${runOrder.externalPo} · ${runOrder.customer} · ${runOrder.shipTo}` : 'Order relationship is not available in this workspace.'}</p></div><span className="status-chip progress">{run.status.replaceAll('_', ' ')}</span></div>
+          <div className="trace-flow"><span>{runInputs.length ? `${runInputs.length} input lot${runInputs.length === 1 ? '' : 's'}` : 'Input not recorded'}</span><ChevronRight size={16}/><span>{outputLot?.lot_code || 'Output lot not recorded'}</span><ChevronRight size={16}/><span>{runCases.filter(productionCase => productionCase.status !== 'voided').length} active case{runCases.filter(productionCase => productionCase.status !== 'voided').length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{runPallets.length} pallet{runPallets.length === 1 ? '' : 's'}</span><ChevronRight size={16}/><span>{runShipments.length ? `${runShipments.length} shipment${runShipments.length === 1 ? '' : 's'}` : 'Not shipped'}</span></div>
+          <div className="trace-detail"><div><strong>Output</strong><span>{runOutputs.length ? runOutputs.map(output => `${output.produced_quantity} ${output.quantity_uom || ''}${output.produced_weight != null ? ` · ${output.produced_weight} ${output.weight_uom || 'LB'}` : ''}`).join(' · ') : 'Not recorded'}</span></div>{runCases.map(productionCase => { const allocation = traceLinks.allocations.find(row => row.production_case_id === productionCase.id && row.status === 'active'); return <div key={productionCase.id} className={productionCase.status === 'voided' ? 'voided' : ''}><strong>{productionCase.case_identifier}</strong><span>{productionCase.status === 'voided' ? 'Voided' : 'Active'}{productionCase.net_weight != null ? ` · ${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}` : ''}{allocation ? ' · Allocated' : ' · Not allocated'}{palletForCase(productionCase) ? ` · ${palletForCase(productionCase)?.pallet_identifier}` : ' · Not palletized'}</span></div>; })}</div>
+          {runShipments.length > 0 && <p className="muted-copy">Shipment: {runShipments.map(shipment => shipment.bol_reference || 'BOL not specified').join(', ')}</p>}
+        </section>;
+      })}
       {orderMatches.map(order => {
         const orderCases = casesForOrder(order.id);
         const activeCases = orderCases.filter(productionCase => productionCase.status !== 'voided');
@@ -1523,7 +1573,7 @@ function TraceRecall({ orders, cases, pallets, assignments }: { orders: Operatio
         </section>;
       })}
       {palletMatches.filter(pallet => !orderMatches.some(order => order.id === pallet.order_id)).map(pallet => {
-        const palletCases = cases.filter(productionCase => palletForCase(productionCase)?.id === pallet.id);
+        const palletCases = allCases.filter(productionCase => palletForCase(productionCase)?.id === pallet.id);
         return <section className="surface trace-card" key={pallet.id}><h2>{pallet.pallet_identifier}</h2><p>{palletCases.length} case{palletCases.length === 1 ? '' : 's'} · {pallet.status}</p></section>;
       })}
     </div> : <Empty title="No traceability match" text="Try a PO number, item, case label, pallet, customer, or ship-to."/>}
