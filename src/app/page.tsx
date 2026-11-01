@@ -1,7 +1,7 @@
 'use client';
 
 import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRightLeft, Bell, Boxes, ChartNoAxesCombined, CheckCheck, ChevronDown, ChevronRight, CircleAlert, ClipboardList, FileText, FlaskConical, FolderOpen, Forward, Grid3X3, Home as HomeIcon, LogOut, Menu, MessageSquare, PackageCheck, Search, Send, Settings, ShieldCheck, ScanSearch, Truck, UsersRound, X } from 'lucide-react';
+import { ArrowLeft, ArrowRightLeft, Bell, Boxes, ChartNoAxesCombined, CheckCheck, ChevronDown, ChevronRight, CircleAlert, ClipboardList, FileText, FlaskConical, FolderOpen, Forward, Grid3X3, Home as HomeIcon, LogOut, Menu, MessageSquare, PackageCheck, PanelLeftClose, PanelLeftOpen, Search, Send, Settings, ShieldCheck, ScanSearch, Truck, UsersRound, X } from 'lucide-react';
 import { orders as seedOrders, pallets as seedPallets } from '@/lib/core/mock';
 import type { Pallet, UnifiedOrder } from '@/lib/core/types';
 import { createClient } from '@/utils/supabase/client';
@@ -19,6 +19,7 @@ import { ControlledQaOrderWorkspace } from '@/components/controlled-qa-order-wor
 type Role = 'lucid_admin' | 'leadership' | 'office' | 'production';
 type Section = 'Home' | 'Orders' | 'Exceptions' | 'Production' | 'Inventory' | 'Pallets' | 'Shipments' | 'Trace' | 'Reports' | 'Imports' | 'Samples' | 'Documents' | 'Office' | 'Logistics' | 'Sales' | 'Roadmap' | 'MasterData' | 'System';
 type Notice = { tone: 'success' | 'warning' | 'info'; message: string } | null;
+type DesktopNavigationMode = 'auto' | 'expanded' | 'collapsed';
 
 type UserRecord = {
   id: string;
@@ -407,6 +408,9 @@ export default function Home() {
   const [passwordRecoveryMessage, setPasswordRecoveryMessage] = useState('');
   const [accountOpen, setAccountOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [desktopNavigationMode, setDesktopNavigationMode] = useState<DesktopNavigationMode>('auto');
+  const [mediumDesktop, setMediumDesktop] = useState(false);
+  const [navigationHintVisible, setNavigationHintVisible] = useState(false);
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [mobileThreadOpen, setMobileThreadOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -420,6 +424,7 @@ export default function Home() {
   const [scanCode, setScanCode] = useState('');
   const [scanItem, setScanItem] = useState('');
   const brandButton = useRef<HTMLButtonElement>(null);
+  const mobileNavigationTrigger = useRef<HTMLButtonElement>(null);
   const mobileDrawer = useRef<HTMLElement>(null);
   const [navigationRestored, setNavigationRestored] = useState(false);
 
@@ -477,6 +482,17 @@ export default function Home() {
   }, [navigationRestored, section, selectedPalletId, selectedStagedOrderId, selectedProductionOrderId]);
 
   useEffect(() => {
+    const mediumQuery = window.matchMedia('(min-width: 821px) and (max-width: 1180px)');
+    const syncViewport = () => setMediumDesktop(mediumQuery.matches);
+    syncViewport();
+    mediumQuery.addEventListener('change', syncViewport);
+    const savedMode = window.localStorage.getItem('lucid-core-desktop-navigation-mode');
+    if (savedMode === 'expanded' || savedMode === 'collapsed') setDesktopNavigationMode(savedMode);
+    setNavigationHintVisible(window.localStorage.getItem('lucid-core-navigation-hint-dismissed') !== 'true');
+    return () => mediumQuery.removeEventListener('change', syncViewport);
+  }, []);
+
+  useEffect(() => {
     if (!mobileNavOpen) return;
     const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
     const focusFirst = () => mobileDrawer.current?.querySelector<HTMLElement>(focusableSelector)?.focus();
@@ -497,7 +513,7 @@ export default function Home() {
       window.clearTimeout(timer);
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = '';
-      brandButton.current?.focus();
+      (mobileNavigationTrigger.current || brandButton.current)?.focus();
     };
   }, [mobileNavOpen]);
 
@@ -884,6 +900,16 @@ export default function Home() {
   function openMessages(threadId?:string) { setMessagesOpen(true); setNotificationsOpen(false); setMobileThreadOpen(Boolean(threadId)); const id=threadId || activeThread?.id || currentThreads[0]?.id || 'thread-team'; setActiveThreadId(id); void markThreadRead(id); }
   function openNotifications() { setNotificationsOpen(true); setMessagesOpen(false); }
   function navigateToSection(nextSection: Section) { setWorkspaceSection(nextSection, 'mobile navigation'); setMobileNavOpen(false); }
+  const desktopNavigationCollapsed = desktopNavigationMode === 'collapsed' || (desktopNavigationMode === 'auto' && mediumDesktop);
+  function toggleDesktopNavigation() {
+    const nextMode: DesktopNavigationMode = desktopNavigationCollapsed ? 'expanded' : 'collapsed';
+    setDesktopNavigationMode(nextMode);
+    window.localStorage.setItem('lucid-core-desktop-navigation-mode', nextMode);
+  }
+  function dismissNavigationHint() {
+    setNavigationHintVisible(false);
+    window.localStorage.setItem('lucid-core-navigation-hint-dismissed', 'true');
+  }
 
   function audit(action: string, entity: string, detail: string) {
     const user = currentUser?.name || 'Prototype user';
@@ -1191,7 +1217,8 @@ export default function Home() {
   return (
     <div className="app-shell">
       <header className="topbar modern-topbar">
-        <button ref={brandButton} className="brand-button" onClick={() => window.matchMedia('(max-width: 820px)').matches ? setMobileNavOpen(true) : setWorkspaceSection('Home', 'brand button')} aria-label="Open navigation on mobile or go to home on desktop" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation">
+        <button ref={mobileNavigationTrigger} className="mobile-nav-trigger" type="button" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation menu" aria-expanded={mobileNavOpen} aria-controls="mobile-navigation"><Menu size={22}/><span>Menu</span></button>
+        <button ref={brandButton} className="brand-button" onClick={() => setWorkspaceSection('Home', 'brand button')} aria-label="Go to Home">
           {state.branding.logoDataUrl ? <span className="brand-logo-wrap"><img src={state.branding.logoDataUrl} alt="Company logo" /></span> : <span className="brand-mark">L</span>}
           <span><strong>{state.branding.appName}</strong><small>{state.branding.companyName} · {state.branding.tagline}</small></span>
         </button>
@@ -1250,15 +1277,21 @@ export default function Home() {
         </aside>
       </div>}
 
-      <div className="workspace">
+      <div className={`workspace nav-${desktopNavigationMode} ${desktopNavigationCollapsed ? 'nav-is-collapsed' : 'nav-is-expanded'}`}>
         <aside className="side-nav" aria-label="Main navigation">
+          <div className="desktop-nav-head">
+            <button type="button" className="desktop-nav-toggle" onClick={toggleDesktopNavigation} aria-label={desktopNavigationCollapsed ? 'Expand navigation' : 'Collapse navigation'} aria-expanded={!desktopNavigationCollapsed}>
+              {desktopNavigationCollapsed ? <PanelLeftOpen size={19}/> : <PanelLeftClose size={19}/>}<span>{desktopNavigationCollapsed ? 'Expand navigation' : 'Collapse navigation'}</span>
+            </button>
+            {!desktopNavigationCollapsed && navigationHintVisible && <div className="desktop-nav-hint" role="status"><span>Need more space? Collapse the navigation anytime.</span><button type="button" onClick={dismissNavigationHint} aria-label="Dismiss navigation hint">×</button></div>}
+          </div>
           <nav>
-            <span className="nav-group-label">Operations</span>
-            {(['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace','Reports'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
-            <span className="nav-group-label">Records & Growth</span>
-            {(['Samples','Documents','Office','Logistics','Sales'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
-            <span className="nav-group-label">Management</span>
-            {(['Roadmap','MasterData','Imports','System'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')}><SectionIcon name={item} /><span>{sectionLabels[item]}</span></button>)}
+            <span className="nav-group-label" aria-hidden={desktopNavigationCollapsed}>Operations</span>
+            {(['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace','Reports'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')} aria-label={desktopNavigationCollapsed ? sectionLabels[item] : undefined} title={desktopNavigationCollapsed ? sectionLabels[item] : undefined} data-tooltip={sectionLabels[item]}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
+            <span className="nav-group-label" aria-hidden={desktopNavigationCollapsed}>Records & Growth</span>
+            {(['Samples','Documents','Office','Logistics','Sales'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')} aria-label={desktopNavigationCollapsed ? sectionLabels[item] : undefined} title={desktopNavigationCollapsed ? sectionLabels[item] : undefined} data-tooltip={sectionLabels[item]}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
+            <span className="nav-group-label" aria-hidden={desktopNavigationCollapsed}>Management</span>
+            {(['Roadmap','MasterData','Imports','System'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')} aria-label={desktopNavigationCollapsed ? sectionLabels[item] : undefined} title={desktopNavigationCollapsed ? sectionLabels[item] : undefined} data-tooltip={sectionLabels[item]}><SectionIcon name={item} /><span>{sectionLabels[item]}</span></button>)}
           </nav>
           <div className="side-help"><strong>Need help?</strong><span>Lucid Core only shows the tools needed for your role.</span></div>
         </aside>
