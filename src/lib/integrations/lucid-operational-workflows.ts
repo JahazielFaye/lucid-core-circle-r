@@ -77,13 +77,19 @@ export async function runOperationalWorkflow(action: string, body: Record<string
   const sourceSystem = controlledSourceSystem(body.sourceSystem);
   switch (action) {
     case 'preview-historical-import': return previewHistoricalImport({
+      relatedRecords: body.relatedRecords,
+      previousManifest: body.previousManifest,
+      datasetVersion: typeof body.datasetVersion === 'string' ? body.datasetVersion : undefined,
+      sourceReference: typeof body.sourceReference === 'string' ? body.sourceReference : undefined,
       entity: string(body.entity, 'Historical entity') as import('@/lib/integrations/historical-import').HistoricalImportEntity,
       rows: Array.isArray(body.rows) ? body.rows as import('@/lib/integrations/historical-import').HistoricalImportRow[] : [],
+      mode: body.mode === 'current' ? 'current' : 'historical',
     });
     case 'commit-historical-import': return commitHistoricalImport({
       entity: string(body.entity, 'Historical entity') as import('@/lib/integrations/historical-import').HistoricalImportEntity,
       sourceReference: string(body.sourceReference, 'Source reference', true) || undefined,
       rows: Array.isArray(body.rows) ? body.rows as import('@/lib/integrations/historical-import').HistoricalImportRow[] : [],
+      mode: body.mode === 'current' ? 'current' : 'historical',
     });
     case 'create-receipt': {
       const isQa = sourceSystem === 'lucid_qa';
