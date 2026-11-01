@@ -13,7 +13,20 @@ function value(field:string,raw:unknown):ManifestRecord['customer_name']{
 }
 function immutable<T>(v:T):T {if(v&&typeof v==='object'){Object.values(v).forEach(immutable);Object.freeze(v);}return v;}
 function content(m:CustomerReviewManifest){return {schema_version:m.schema_version,lineage_id:m.lineage_id,environment:m.environment,organization_id:m.organization_id,source_system:m.source_system,source_dataset:m.source_dataset,planner_version:m.planner_version,plan_hash:m.plan_hash,snapshot_hash:m.snapshot_hash,customers:m.customers,unlinked_related_records:m.unlinked_related_records,related_coverage:m.related_coverage,validation_findings:m.validation_findings,privacy_policy:m.privacy_policy,counts:m.counts,approval_storage:m.approval_storage,executable:m.executable};}
-function artifact(m:CustomerReviewManifest){const {artifact_hash,...integrity}=m.integrity;return {...m,integrity};}
+/**
+ * The review artifact that formal approval binds to.  This is deliberately
+ * independent of when or by which browser session the same plan was rendered.
+ * Arrays retain their deliberate source/planner order; object keys are sorted
+ * by canonicalImportJson before hashing.
+ */
+export function canonicalCustomerManifestPayload(m:CustomerReviewManifest){return {
+ schema_version:m.schema_version,manifest_id:m.manifest_id,manifest_version:m.manifest_version,lineage_id:m.lineage_id,previous_manifest_id:m.previous_manifest_id,
+ environment:m.environment,organization_id:m.organization_id,source_system:m.source_system,source_dataset:m.source_dataset,planner_version:m.planner_version,plan_hash:m.plan_hash,snapshot_hash:m.snapshot_hash,
+ counts:m.counts,customers:m.customers,unlinked_related_records:m.unlinked_related_records,related_coverage:m.related_coverage,validation_findings:m.validation_findings,
+ approval_storage:m.approval_storage,executable:m.executable,privacy_policy:m.privacy_policy,comparison:m.comparison,
+};}
+/** Exact deterministic binding used by the registration route after it replans server-side. */
+export function matchesCustomerManifestAuthority(expected:CustomerReviewManifest,submitted:CustomerReviewManifest){return expected.manifest_id===submitted.manifest_id&&expected.integrity.source_hash===submitted.integrity.source_hash&&expected.integrity.plan_hash===submitted.integrity.plan_hash&&expected.integrity.content_hash===submitted.integrity.content_hash&&expected.integrity.artifact_hash===submitted.integrity.artifact_hash;}
 function recordFingerprint(record:Omit<ManifestRecord,'record_hash'>|ManifestRecord){
  const {record_hash,source_provenance,existing_lucid_match,...rest}=record as ManifestRecord;
  const {source_hash,proposal_number,...provenance}=source_provenance;
@@ -25,7 +38,7 @@ export function validateCustomerManifest(raw:unknown):CustomerReviewManifest{
  for(const r of records){if(ids.has(r.record_key))throw Error('Repeated manifest key.');ids.add(r.record_key);const {related_records,...base}=r as ManifestRecord&{related_records?:ManifestRecord[]};if(recordFingerprint(base)!==r.record_hash)throw Error('Record fingerprint mismatch.');}
  for(const action of ['CREATE','UPDATE','NO_CHANGE','SKIP','CONFLICT'] as const)if(m.counts.by_action[action]!==records.filter(r=>r.action===action).length)throw Error('Manifest counts do not match.');
  const entities=new Set(records.map(r=>r.entity));if(Object.keys(m.counts.by_entity).length!==entities.size||[...entities].some(entity=>m.counts.by_entity[entity]!==records.filter(r=>r.entity===entity).length))throw Error('Entity counts mismatch.');
- if(m.counts.total!==records.length||m.source_dataset.hash!==m.integrity.source_hash||m.plan_hash!==m.integrity.plan_hash||digest(content(m))!==m.integrity.content_hash||digest(artifact(m))!==m.integrity.artifact_hash||digest({lineage:m.lineage_id,version:m.manifest_version,content:m.integrity.content_hash})!==m.manifest_id)throw Error('Manifest integrity mismatch.');
+ if(m.counts.total!==records.length||m.source_dataset.hash!==m.integrity.source_hash||m.plan_hash!==m.integrity.plan_hash||digest(content(m))!==m.integrity.content_hash||digest(canonicalCustomerManifestPayload(m))!==m.integrity.artifact_hash||digest({lineage:m.lineage_id,version:m.manifest_version,content:m.integrity.content_hash})!==m.manifest_id)throw Error('Manifest integrity mismatch.');
  return m;
 }
 export function compareCustomerManifests(previous:CustomerReviewManifest|undefined,current:CustomerReviewManifest){
@@ -62,7 +75,7 @@ export function createCustomerManifest(input:ManifestInput):CustomerReviewManife
  const relatedCoverage=Object.fromEntries(relatedEntities.map(entity=>{const supplied=related.filter(r=>r.entity===entity).length;return [entity,{supplied,state:supplied?'MANUAL_REVIEW_REQUIRED':'NOT_SUPPLIED'}];}));
  let manifest=customerManifestSchema.parse({schema_version:'customer-review-manifest-v1',manifest_version:previous?previous.manifest_version+1:1,manifest_id:'0'.repeat(64),lineage_id:lineage,previous_manifest_id:previous?.manifest_id??null,generated_at:input.generatedAt,generated_by:{actor_id:input.generatedBy,assurance:'SERVER_SESSION_NOT_SIGNED'},environment:input.environment,organization_id:plan.organization_id,source_system:'food_connex',source_dataset:{reference:plan.source_reference,version:input.datasetVersion??null,hash:sourceHash,hash_scope:'CANONICAL_PROPOSED_CUSTOMERS_AND_SUPPLIED_RELATIONSHIPS'},planner_version:plan.version,plan_hash:plan.plan_id,snapshot_hash:plan.snapshot_hash,counts,customers,unlinked_related_records:unlinked,related_coverage:relatedCoverage,validation_findings:plan.findings,approval_storage:'NONE_EXPORT_ONLY',executable:false,privacy_policy:'PRIVATE_PLAINTEXT_WITHHELD_V1',comparison:{added:[],removed:[],changed:[],resolved_conflicts:[],introduced_conflicts:[]},integrity:{algorithm:'SHA-256',source_hash:sourceHash,plan_hash:plan.plan_id,content_hash:'0'.repeat(64),artifact_hash:'0'.repeat(64),signature:null}});
  manifest.integrity.content_hash=digest(content(manifest));if(previous?.integrity.content_hash===manifest.integrity.content_hash)return immutable(previous);
- manifest.manifest_id=digest({lineage,version:manifest.manifest_version,content:manifest.integrity.content_hash});manifest.comparison=compareCustomerManifests(previous,manifest);manifest.integrity.artifact_hash=digest(artifact(manifest));return immutable(validateCustomerManifest(manifest));
+ manifest.manifest_id=digest({lineage,version:manifest.manifest_version,content:manifest.integrity.content_hash});manifest.comparison=compareCustomerManifests(previous,manifest);manifest.integrity.artifact_hash=digest(canonicalCustomerManifestPayload(manifest));return immutable(validateCustomerManifest(manifest));
 }
 const oneLine=(text:string)=>JSON.stringify(text).slice(1,-1);
 export function customerManifestSummary(manifest:CustomerReviewManifest):string{

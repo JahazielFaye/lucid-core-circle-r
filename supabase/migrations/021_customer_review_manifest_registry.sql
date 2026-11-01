@@ -171,8 +171,11 @@ begin
   select m.* into existing_row from customer_review_manifests as m
     where m.organization_id = actor.organization_id and m.manifest_id = manifest_identifier;
   if found then
+    -- generated_at/generated_by are display/audit metadata, not part of the
+    -- deterministic review artifact.  The first registry row retains them for
+    -- audit; all substantive canonical fields remain exact-match protected.
     if existing_row.source_hash is distinct from source_hash_value or existing_row.plan_hash is distinct from plan_hash_value
-       or existing_row.canonical_manifest is distinct from p_manifest then
+       or (existing_row.canonical_manifest - 'generated_at' - 'generated_by') is distinct from (p_manifest - 'generated_at' - 'generated_by') then
       raise exception 'Manifest ID collision with different immutable content.';
     end if;
     return jsonb_build_object('registry_id', existing_row.id, 'manifest_id', existing_row.manifest_id, 'manifest_version', existing_row.manifest_version, 'status', existing_row.status, 'registered', false);
