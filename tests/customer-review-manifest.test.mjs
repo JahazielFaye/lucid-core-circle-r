@@ -1,7 +1,7 @@
-import test from 'node:test';import assert from 'node:assert/strict';import React from 'react';import {renderToStaticMarkup} from 'react-dom/server';
+import test from 'node:test';import assert from 'node:assert/strict';import {readFileSync} from 'node:fs';import React from 'react';import {renderToStaticMarkup} from 'react-dom/server';
 import {canonicalCustomerManifestPayload,createCustomerManifest,matchesCustomerManifestAuthority,validateCustomerManifest,customerManifestSummary} from '../src/lib/integrations/customer-review-manifest.ts';
 import {allManifestRecords,reviewDraft} from '../src/lib/integrations/customer-review-manifest-contract.ts';
-import {CustomerManifestReview} from '../src/components/customer-review-manifest.tsx';
+import {CustomerManifestReview,canInvalidateCustomerManifest,customerManifestDecisionOptions} from '../src/components/customer-review-manifest.tsx';
 import {manifestInput,manifestSource,manifestExisting,relatedEvidence,changedInput} from './customer-review-manifest.fixtures.mjs';
 import {proposed,request,snapshot} from './customer-import-planner.fixtures.mjs';import {planCustomerImport} from '../src/lib/integrations/customer-import-planner.ts';import {previewHistoricalImport,commitHistoricalImport} from '../src/lib/integrations/historical-import.ts';import {runOperationalWorkflow} from '../src/lib/integrations/lucid-operational-workflows.ts';import {resetContext,stats} from './customer-import-context.stub.mjs';
 test('Customer actions are derived from the exact preview: CREATE UPDATE NO_CHANGE SKIP CONFLICT',()=>{
@@ -66,6 +66,33 @@ test('conflicts and unknown records cannot be approved through review export',()
 });
 test('manifest UI shows review/export controls, no commit, no private values or localStorage persistence',()=>{
  const m=createCustomerManifest(manifestInput());const html=renderToStaticMarkup(React.createElement(CustomerManifestReview,{manifest:m,summary:customerManifestSummary(m)}));for(const s of ['Export JSON manifest','Export review summary','Export review draft','Not reviewed','Needs review','Version comparison'])assert.ok(html.includes(s),s);assert.ok(!html.includes('SYNTHETIC_PRIVATE_PHONE'));assert.ok(!html.includes('Confirm and import'));assert.match(html,/drafts, not saved approvals/);
+});
+test('formal review controls follow the existing role policy and closed manifests stay read-only',()=>{
+ assert.deepEqual(customerManifestDecisionOptions('lucid_admin','READY_FOR_REVIEW'),['NEEDS_REVIEW','APPROVE','REJECT']);
+ assert.deepEqual(customerManifestDecisionOptions('leadership','READY_FOR_REVIEW'),['NEEDS_REVIEW']);
+ assert.deepEqual(customerManifestDecisionOptions('office','READY_FOR_REVIEW'),['NEEDS_REVIEW']);
+ assert.deepEqual(customerManifestDecisionOptions('production','READY_FOR_REVIEW'),[]);
+ assert.deepEqual(customerManifestDecisionOptions('lucid_admin','INVALIDATED'),[]);
+ assert.equal(canInvalidateCustomerManifest('lucid_admin','READY_FOR_REVIEW'),true);
+ assert.equal(canInvalidateCustomerManifest('leadership','READY_FOR_REVIEW'),false);
+ assert.equal(canInvalidateCustomerManifest('lucid_admin','SUPERSEDED'),false);
+});
+test('registered manifest UI exposes invalidation only to Lucid Admin and makes invalidated history read-only',()=>{
+ const manifest=createCustomerManifest(manifestInput());
+ const base={manifest:{id:'registry-1',manifest_id:manifest.manifest_id,manifest_version:manifest.manifest_version,source_hash:manifest.integrity.source_hash,plan_hash:manifest.integrity.plan_hash,status:'READY_FOR_REVIEW',generated_at:manifest.generated_at},approvals:[]};
+ const admin=renderToStaticMarkup(React.createElement(CustomerManifestReview,{manifest,summary:customerManifestSummary(manifest),initialRegistry:{...base,viewerRole:'lucid_admin'}}));
+ assert.match(admin,/Invalidate this registered review/);assert.match(admin,/Invalidation reason/);assert.match(admin,/Approve exact manifest/);
+ for(const role of ['leadership','office']){const html=renderToStaticMarkup(React.createElement(CustomerManifestReview,{manifest,summary:customerManifestSummary(manifest),initialRegistry:{...base,viewerRole:role}}));assert.ok(!html.includes('Invalidate this registered review'));assert.ok(!html.includes('Approve exact manifest'));assert.match(html,/Needs review/);}
+ const production=renderToStaticMarkup(React.createElement(CustomerManifestReview,{manifest,summary:customerManifestSummary(manifest),initialRegistry:{...base,viewerRole:'production'}}));assert.ok(!production.includes('Save formal decision'));assert.match(production,/cannot record a formal decision/);
+ const invalidated=renderToStaticMarkup(React.createElement(CustomerManifestReview,{manifest,summary:customerManifestSummary(manifest),initialRegistry:{...base,manifest:{...base.manifest,status:'INVALIDATED'},viewerRole:'lucid_admin',invalidation:{reason:'Source extract was replaced.',invalidatedAt:'2026-11-01T00:00:00Z',invalidatedBy:'admin'}}}));assert.match(invalidated,/cannot become commit-eligible/);assert.match(invalidated,/Source extract was replaced/);assert.ok(!invalidated.includes('Save formal decision'));assert.ok(!invalidated.includes('Invalidate this registered review'));
+});
+test('invalidation remains a reason-required Lucid Admin server operation with no Customer-family write path',()=>{
+ const migration=readFileSync(new URL('../supabase/migrations/021_customer_review_manifest_registry.sql',import.meta.url),'utf8');
+ assert.match(migration,/create or replace function invalidate_customer_review_manifest/);
+ assert.match(migration,/nullif\(btrim\(p_reason\), ''\) is null/);
+ assert.match(migration,/actor\.role <> 'lucid_admin'/);
+ assert.match(migration,/customer review manifest invalidated/);
+ assert.doesNotMatch(migration,/insert into customers|update customers|insert into customer_ship_tos|update customer_ship_tos|insert into customer_items|update customer_items/i);
 });
 test('authenticated preview produces manifest from same plan with zero operational write calls',async()=>{
  resetContext(manifestExisting());const result=await previewHistoricalImport({entity:'customers',mode:'current',sourceReference:'SYNTHETIC-QA-CUSTOMERS-v1',rows:manifestSource(),relatedRecords:relatedEvidence});assert.equal(result.manifest.plan_hash,result.plan.plan_id);assert.equal(result.manifest.generated_by.actor_id,'synthetic-admin');assert.equal(result.manifest.customers[0].related_records.length,4);assert.equal(stats.writes,0);

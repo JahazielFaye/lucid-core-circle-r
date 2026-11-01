@@ -41,7 +41,27 @@ export async function readCustomerReviewManifestRegistry(registryId: string) {
     .select('id,reviewer_id,reviewer_role,decision,comment,source_hash,plan_hash,decided_at')
     .eq('manifest_registry_id', registryId).eq('organization_id', profile.organization_id).order('decided_at', { ascending: false });
   if (approvalError) throw new Error(approvalError.message);
-  return { manifest, approvals: approvals || [], viewerRole: profile.role };
+  const { data: invalidation, error: invalidationError } = await supabase
+    .from('audit_events')
+    .select('actor_id,details,created_at')
+    .eq('organization_id', profile.organization_id)
+    .eq('entity_type', 'customer_review_manifest')
+    .eq('entity_id', registryId)
+    .eq('action', 'customer review manifest invalidated')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (invalidationError) throw new Error(invalidationError.message);
+  return {
+    manifest,
+    approvals: approvals || [],
+    viewerRole: profile.role,
+    invalidation: invalidation ? {
+      reason: typeof invalidation.details?.reason === 'string' ? invalidation.details.reason : null,
+      invalidatedAt: invalidation.created_at,
+      invalidatedBy: invalidation.actor_id,
+    } : null,
+  };
 }
 
 export async function recordCustomerReviewManifestDecision(input: { registryId: string; manifestId: string; manifestVersion: number; sourceHash: string; planHash: string; decision: Decision; comment?: string }) {
@@ -58,4 +78,17 @@ export async function recordCustomerReviewManifestDecision(input: { registryId: 
   });
   if (error) throw new Error(error.message);
   return { ...(data as { approval_id: string; status: string; decision: Decision; commit_eligible: boolean }), viewerRole: profile.role };
+}
+
+export async function invalidateCustomerReviewManifest(input: { registryId: string; reason: string }) {
+  const reason = input.reason.trim();
+  if (!reason) throw new Error('An invalidation reason is required.');
+  const { supabase, profile } = await context();
+  if (profile.role !== 'lucid_admin') throw new CustomerManifestRegistryAuthError('Only Lucid Admin can invalidate a Customer review manifest.');
+  const { data, error } = await supabase.rpc('invalidate_customer_review_manifest', {
+    p_registry_id: input.registryId,
+    p_reason: reason,
+  });
+  if (error) throw new Error(error.message);
+  return data as { registry_id: string; status: 'INVALIDATED' };
 }

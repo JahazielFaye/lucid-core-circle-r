@@ -270,6 +270,9 @@ set search_path = public
 as $$
 declare actor profiles%rowtype; manifest_row customer_review_manifests%rowtype;
 begin
+  if nullif(btrim(p_reason), '') is null then
+    raise exception 'An invalidation reason is required.';
+  end if;
   select p.* into actor from profiles as p where p.id = auth.uid() and p.active = true;
   if not found or actor.role <> 'lucid_admin' then raise exception 'Only Lucid Admin can invalidate a review manifest.'; end if;
   select m.* into manifest_row from customer_review_manifests as m where m.id = p_registry_id and m.organization_id = actor.organization_id for update;
