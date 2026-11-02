@@ -9,7 +9,8 @@
     "test:customer-manifest": "node --import ./tests/register-server-only.mjs --test tests/customer-import-planner.test.mjs tests/customer-import-review.test.mjs tests/customer-review-manifest.test.mjs",
     "test:import-review": "node --import ./tests/register-server-only.mjs --test tests/customer-import-planner.test.mjs tests/customer-import-review.test.mjs",
     "preview:import-review": "node --import ./tests/register-server-only.mjs tests/customer-import-review.preview.mjs",
-    "test:import-planner": "node --import ./tests/register-server-only.mjs --test tests/customer-import-planner.test.mjs"
+    "test:import-planner": "node --import ./tests/register-server-only.mjs --test tests/customer-import-planner.test.mjs",
+    "test:responsive-navigation": "node --test tests/responsive-navigation.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

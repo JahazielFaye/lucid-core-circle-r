@@ -493,6 +493,20 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    const mobileQuery = window.matchMedia('(max-width: 820px)');
+    const closeDrawerOutsideMobile = () => {
+      if (mobileQuery.matches) return;
+      // The visual drawer is hidden by CSS at desktop widths. Reset the React
+      // state too so the drawer effect removes its body scroll lock.
+      setMobileNavOpen(false);
+      document.body.style.overflow = '';
+    };
+    mobileQuery.addEventListener('change', closeDrawerOutsideMobile);
+    closeDrawerOutsideMobile();
+    return () => mobileQuery.removeEventListener('change', closeDrawerOutsideMobile);
+  }, []);
+
+  useEffect(() => {
     if (!mobileNavOpen) return;
     const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
     const focusFirst = () => mobileDrawer.current?.querySelector<HTMLElement>(focusableSelector)?.focus();
@@ -513,7 +527,10 @@ export default function Home() {
       window.clearTimeout(timer);
       document.removeEventListener('keydown', onKeyDown);
       document.body.style.overflow = '';
-      (mobileNavigationTrigger.current || brandButton.current)?.focus();
+      const focusTarget = window.matchMedia('(max-width: 820px)').matches
+        ? mobileNavigationTrigger.current
+        : brandButton.current;
+      focusTarget?.focus();
     };
   }, [mobileNavOpen]);
 
@@ -899,7 +916,8 @@ export default function Home() {
   }
   function openMessages(threadId?:string) { setMessagesOpen(true); setNotificationsOpen(false); setMobileThreadOpen(Boolean(threadId)); const id=threadId || activeThread?.id || currentThreads[0]?.id || 'thread-team'; setActiveThreadId(id); void markThreadRead(id); }
   function openNotifications() { setNotificationsOpen(true); setMessagesOpen(false); }
-  function navigateToSection(nextSection: Section) { setWorkspaceSection(nextSection, 'mobile navigation'); setMobileNavOpen(false); }
+  function closeMobileNavigation() { setMobileNavOpen(false); }
+  function navigateToSection(nextSection: Section) { setWorkspaceSection(nextSection, 'mobile navigation'); closeMobileNavigation(); }
   const desktopNavigationCollapsed = desktopNavigationMode === 'collapsed' || (desktopNavigationMode === 'auto' && mediumDesktop);
   function toggleDesktopNavigation() {
     const nextMode: DesktopNavigationMode = desktopNavigationCollapsed ? 'expanded' : 'collapsed';
@@ -1261,11 +1279,11 @@ export default function Home() {
         </div>
       </div>}
 
-      {mobileNavOpen && <div className="mobile-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setMobileNavOpen(false); }}>
+      {mobileNavOpen && <div className="mobile-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeMobileNavigation(); }}>
         <aside ref={mobileDrawer} id="mobile-navigation" className="mobile-drawer" role="dialog" aria-modal="true" aria-label="Lucid Core navigation">
           <div className="mobile-drawer-head">
             <div className="mobile-drawer-brand"><span className="brand-mark">L</span><span><strong>{state.branding.appName}</strong><small>{state.branding.companyName}</small></span></div>
-            <button className="icon-button" type="button" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation menu"><X size={19}/></button>
+            <button className="icon-button" type="button" onClick={closeMobileNavigation} aria-label="Close navigation menu"><X size={19}/></button>
           </div>
           <nav className="mobile-drawer-nav" aria-label="Mobile navigation">
             {mobileNavigationGroups.map(group => {
