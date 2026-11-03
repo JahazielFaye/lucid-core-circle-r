@@ -185,3 +185,7 @@ html,body{max-width:100%;overflow-x:clip}
 .qa-receipt-panel,.qa-receipt-actions{min-width:0;max-width:100%}
 .qa-receipt-panel p,.qa-receipt-panel small{overflow-wrap:anywhere}
 @media(max-width:720px){.qa-receipt-actions{width:100%}.qa-receipt-actions .secondary{max-width:100%}.master-data-surface .review-footer{min-width:0;flex-wrap:wrap}}
+
+/* The drawer is the only scroll surface while mobile navigation is open. */
+.mobile-drawer-backdrop{touch-action:none;overscroll-behavior:contain}
+.mobile-drawer{touch-action:pan-y;overscroll-behavior:contain}

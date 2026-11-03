@@ -426,6 +426,7 @@ export default function Home() {
   const brandButton = useRef<HTMLButtonElement>(null);
   const mobileNavigationTrigger = useRef<HTMLButtonElement>(null);
   const mobileDrawer = useRef<HTMLElement>(null);
+  const mobileDrawerRestoreFrame = useRef<number | null>(null);
   const [navigationRestored, setNavigationRestored] = useState(false);
 
   function setWorkspaceSection(nextSection: Section, source: string) {
@@ -497,9 +498,9 @@ export default function Home() {
     const closeDrawerOutsideMobile = () => {
       if (mobileQuery.matches) return;
       // The visual drawer is hidden by CSS at desktop widths. Reset the React
-      // state too so the drawer effect removes its body scroll lock.
+      // state too so the drawer effect restores its saved scroll position and
+      // removes every mobile-only lock style.
       setMobileNavOpen(false);
-      document.body.style.overflow = '';
     };
     mobileQuery.addEventListener('change', closeDrawerOutsideMobile);
     closeDrawerOutsideMobile();
@@ -508,11 +509,40 @@ export default function Home() {
 
   useEffect(() => {
     if (!mobileNavOpen) return;
+    if (mobileDrawerRestoreFrame.current !== null) {
+      window.cancelAnimationFrame(mobileDrawerRestoreFrame.current);
+      mobileDrawerRestoreFrame.current = null;
+    }
     const focusableSelector = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
     const focusFirst = () => mobileDrawer.current?.querySelector<HTMLElement>(focusableSelector)?.focus();
     const timer = window.setTimeout(focusFirst, 0);
+    const scrollY = window.scrollY;
+    const body = document.body;
+    const root = document.documentElement;
+    const previousStyles = {
+      bodyOverflow: body.style.overflow,
+      bodyPosition: body.style.position,
+      bodyTop: body.style.top,
+      bodyLeft: body.style.left,
+      bodyRight: body.style.right,
+      bodyWidth: body.style.width,
+      rootOverflow: root.style.overflow,
+    };
+    // A fixed body preserves the current scroll position on iOS as well as
+    // desktop browsers. overflow alone still permits background touch scroll
+    // in several mobile browser configurations.
+    body.style.overflow = 'hidden';
+    body.style.position = 'fixed';
+    body.style.top = `-${scrollY}px`;
+    body.style.left = '0';
+    body.style.right = '0';
+    body.style.width = '100%';
+    root.style.overflow = 'hidden';
+    const preventBackgroundScroll = (event: Event) => {
+      if (!mobileDrawer.current?.contains(event.target as Node)) event.preventDefault();
+    };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { setMobileNavOpen(false); return; }
+      if (event.key === 'Escape') { closeMobileNavigation(); return; }
       if (event.key !== 'Tab') return;
       const focusable = Array.from(mobileDrawer.current?.querySelectorAll<HTMLElement>(focusableSelector) || []);
       if (!focusable.length) return;
@@ -522,15 +552,28 @@ export default function Home() {
       if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     };
     document.addEventListener('keydown', onKeyDown);
-    document.body.style.overflow = 'hidden';
+    document.addEventListener('touchmove', preventBackgroundScroll, { passive: false });
+    document.addEventListener('wheel', preventBackgroundScroll, { passive: false });
     return () => {
       window.clearTimeout(timer);
       document.removeEventListener('keydown', onKeyDown);
-      document.body.style.overflow = '';
-      const focusTarget = window.matchMedia('(max-width: 820px)').matches
-        ? mobileNavigationTrigger.current
-        : brandButton.current;
-      focusTarget?.focus();
+      document.removeEventListener('touchmove', preventBackgroundScroll);
+      document.removeEventListener('wheel', preventBackgroundScroll);
+      body.style.overflow = previousStyles.bodyOverflow;
+      body.style.position = previousStyles.bodyPosition;
+      body.style.top = previousStyles.bodyTop;
+      body.style.left = previousStyles.bodyLeft;
+      body.style.right = previousStyles.bodyRight;
+      body.style.width = previousStyles.bodyWidth;
+      root.style.overflow = previousStyles.rootOverflow;
+      mobileDrawerRestoreFrame.current = window.requestAnimationFrame(() => {
+        mobileDrawerRestoreFrame.current = null;
+        window.scrollTo(0, scrollY);
+        const focusTarget = window.matchMedia('(max-width: 820px)').matches
+          ? mobileNavigationTrigger.current
+          : brandButton.current;
+        focusTarget?.focus({ preventScroll: true });
+      });
     };
   }, [mobileNavOpen]);
 
@@ -1279,7 +1322,7 @@ export default function Home() {
         </div>
       </div>}
 
-      {mobileNavOpen && <div className="mobile-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) closeMobileNavigation(); }}>
+      {mobileNavOpen && <div className="mobile-drawer-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) { event.preventDefault(); closeMobileNavigation(); } }}>
         <aside ref={mobileDrawer} id="mobile-navigation" className="mobile-drawer" role="dialog" aria-modal="true" aria-label="Lucid Core navigation">
           <div className="mobile-drawer-head">
             <div className="mobile-drawer-brand"><span className="brand-mark">L</span><span><strong>{state.branding.appName}</strong><small>{state.branding.companyName}</small></span></div>
