@@ -17,6 +17,7 @@ import { ReplacementReadiness } from '@/components/replacement-readiness';
 import { ControlledQaOrderWorkspace } from '@/components/controlled-qa-order-workspace';
 import { InventoryScanPanel } from '@/components/inventory-scan-panel';
 import { HardwareDiagnostics } from '@/components/hardware-diagnostics';
+import { AdminUsersWorkspace } from '@/components/admin-users-workspace';
 import { ScanCapture } from '@/components/scan-capture';
 import { manualWeightReading, validateWeight, ZM303_STATION } from '@/lib/scanning/weight';
 import { prepareCasePrintRequest } from '@/lib/scanning/print-request';
@@ -1541,6 +1542,7 @@ export default function Home() {
 
             <div className="admin-subheading"><span className="kicker">Access</span><h2>Authenticated account</h2></div>
             <section className="surface admin-section"><div className="section-head"><div><h2>{profile?.display_name}</h2><p>Your active organization and role are verified from your Lucid Core profile when you sign in.</p></div><span className="status-chip ready">{roleLabels[role]}</span></div></section>
+            {profile && <AdminUsersWorkspace currentUserId={profile.id} role={role} />}
 
             <div className="admin-subheading"><span className="kicker">Connections</span><h2>Integration status</h2></div>
             <div className="integration-grid">{[

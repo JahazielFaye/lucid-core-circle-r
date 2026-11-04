@@ -13,6 +13,8 @@
     "test:responsive-navigation": "node --test tests/responsive-navigation.test.mjs",
     "test:scanning-weighing": "node --import ./tests/register-server-only.mjs --test tests/scanning-weighing.test.mjs",
     "test:role-operator-flow": "node --test tests/role-operator-flow.test.mjs",
+    "test:user-organization-admin": "node --test tests/user-organization-admin.test.mjs",
+    "test:user-admin": "npm run test:user-organization-admin",
     "test:security-release-gate": "node --test tests/security-release-gate.test.mjs"
   },
   "dependencies": {
