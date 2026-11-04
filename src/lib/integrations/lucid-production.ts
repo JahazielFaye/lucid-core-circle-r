@@ -106,6 +106,19 @@ export async function recordLucidCaseLabelPrint(caseId: string) {
   return callProductionRpc('record_lucid_case_label_print', { p_production_case_id: caseId });
 }
 
+/** A correction is intentionally separate from the operator capture path. */
+export async function correctLucidProductionCaseWeight(caseId: string, netWeight: number, reason: string) {
+  if (!Number.isFinite(netWeight) || netWeight <= 0 || Math.round(netWeight * 100) / 100 !== netWeight) {
+    throw new Error('Enter a positive corrected weight with no more than two decimal places.');
+  }
+  if (!reason.trim()) throw new Error('A correction reason is required.');
+  return callProductionRpc('record_lucid_case_weight_correction', {
+    p_production_case_id: caseId,
+    p_net_weight: netWeight,
+    p_reason: reason.trim(),
+  });
+}
+
 export async function createLucidPallet(orderId: string) {
   return callProductionRpc('create_lucid_pallet', { p_order_id: orderId });
 }

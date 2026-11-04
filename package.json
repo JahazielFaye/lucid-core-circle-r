@@ -12,6 +12,7 @@
     "test:import-planner": "node --import ./tests/register-server-only.mjs --test tests/customer-import-planner.test.mjs",
     "test:responsive-navigation": "node --test tests/responsive-navigation.test.mjs",
     "test:scanning-weighing": "node --import ./tests/register-server-only.mjs --test tests/scanning-weighing.test.mjs",
+    "test:role-operator-flow": "node --test tests/role-operator-flow.test.mjs",
     "test:security-release-gate": "node --test tests/security-release-gate.test.mjs"
   },
   "dependencies": {
