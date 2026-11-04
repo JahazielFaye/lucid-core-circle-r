@@ -6,7 +6,7 @@ import { orders as seedOrders, pallets as seedPallets } from '@/lib/core/mock';
 import type { Pallet, UnifiedOrder } from '@/lib/core/types';
 import { createClient } from '@/utils/supabase/client';
 import { createDirectConversation, loadSharedMessaging, markSharedMessagesRead, sendSharedMessage, type SharedMessagingSnapshot } from '@/lib/supabase/messaging';
-import type { CaseLabelData } from '@/lib/production/case-label';
+import { renderBrowserCaseLabel, type CaseLabelData } from '@/lib/production/case-label';
 import { MasterDataSetup } from '@/components/master-data-setup';
 import { InventoryWorkspace } from '@/components/inventory-workspace';
 import { ProductionGenealogyWorkspace } from '@/components/production-genealogy-workspace';
@@ -1955,10 +1955,11 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
   });
   const printLabel = async (productionCase: ProductionCase, line: ProductionLine) => {
     const label = labelData(productionCase, line);
-    // The request remains preview-only until Circle R confirms the printer connection and template.
+    // Building a printer request is intentionally distinct from previewing the label.
+    // No browser print dialog or printer adapter is invoked here.
     prepareCasePrintRequest(label, ZM303_STATION.id);
     setLabelPreviewCaseId(productionCase.id);
-    setError('Printer adapter is not configured. The label is available for preview only.');
+    setError(null);
   };
   const previewCase = labelPreviewCaseId ? cases.find(productionCase => productionCase.id === labelPreviewCaseId) : undefined;
   const previewLine = previewCase ? order.lines.find(line => line.id === previewCase.order_line_id) : undefined;
@@ -1972,7 +1973,7 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
     </header>
     {error && <p className="production-workspace-error" role="alert">{error}</p>}
     {order.operationalStatus === 'in_production' && <section className="production-operator-scan" aria-label="Select production item"><div><span className="kicker">Step 1 · Select item</span><h2>Scan an item to start Weigh Mode</h2><p>Use a scanner, camera, or manual entry. Nothing is created until you capture a weight and create a case.</p></div><ScanCapture organizationId={organizationId} label="Scan or enter item identifier" onResolved={handleItemScan}/>{scanStatus?.itemCode && <p className="operator-match" role="status"><strong>{scanStatus.itemDescription || scanStatus.itemCode}</strong> · {scanStatus.itemCode}{scanStatus.uom ? ` · ${scanStatus.uom}` : ''}{scanStatus.identifierProvenance === 'legacy_source_alias' ? ' · Source alias matched' : ''}{scanStatus.warnings[0] ? ` · ${scanStatus.warnings[0]}` : ''}</p>}</section>}
-    {previewCase && previewLine && <section className="surface case-label-preview case-created-confirmation"><div><span className="kicker">Case created</span><h2>{productionItemName(previewLine)}</h2><p>{previewCase.case_identifier} · {previewCase.net_weight?.toFixed(2)} {previewCase.net_weight_uom}</p><small>{previewCase.lot_code ? `Prod Code ${previewCase.lot_code} · ` : ''}{new Date(previewCase.produced_at).toLocaleString()} · Label is preview only</small></div><button type="button" className="primary production-action" disabled={saving} onClick={() => void printLabel(previewCase, previewLine)}>{previewCase.label_print_count ? 'Reprint Label' : 'Preview Label'}</button></section>}
+    {previewCase && previewLine && <section className="surface case-label-preview case-created-confirmation"><div><span className="kicker">Case label preview</span><h2>{productionItemName(previewLine)}</h2><p>{previewCase.case_identifier} · {previewCase.net_weight?.toFixed(2)} {previewCase.net_weight_uom}</p><small>{previewCase.lot_code ? `Prod Code ${previewCase.lot_code} · ` : ''}{new Date(previewCase.produced_at).toLocaleString()} · Physical printing is not configured.</small></div><button type="button" className="primary production-action" disabled={saving} onClick={() => void printLabel(previewCase, previewLine)}>Refresh Preview</button><div className="case-label-frame-wrap"><iframe title={`Case label preview for ${previewCase.case_identifier}`} className="case-label-frame" sandbox="" srcDoc={renderBrowserCaseLabel(labelData(previewCase, previewLine))} /></div><p className="case-label-preview-note">Preview is available in Lucid Core. A configured printer adapter is required before physical printing can be enabled.</p></section>}
     <section className="production-line-list"><div className="production-line-table-head" aria-hidden="true"><span>Item ID</span><span>Description</span><span>Ordered</span><span>Produced</span><span>Remaining</span><span>Total Weight</span><span>UOM</span><span>Lot / Prod Code</span><span>Action</span></div>{order.lines.map(line => {
       const produced = producedForLine(line.id);
       const remaining = Math.max(0, line.quantityCases - produced);

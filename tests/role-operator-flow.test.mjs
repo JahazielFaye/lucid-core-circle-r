@@ -41,7 +41,24 @@ test('operator UI resolves scans before capture and labels manual entry honestly
   assert.match(production, /Manual weight entry/);
   assert.match(production, /manualWeightReading\(weight\)/);
   assert.match(production, /Create Case & Preview Label/);
-  assert.match(production, /preview only/);
+  assert.match(production, /Physical printing is not configured/);
+});
+
+test('case label previews are rendered in-app and remain separate from unavailable physical printing', () => {
+  assert.match(production, /renderBrowserCaseLabel/);
+  assert.match(production, /className="case-label-frame"/);
+  assert.match(production, /Physical printing is not configured/);
+  assert.doesNotMatch(production, /startBrowserCaseLabelPrint|window\.print/);
+});
+
+test('the atomic weight-reading RPC prevents reuse and same-key retries remain idempotent', () => {
+  assert.match(migration, /if found then[\s\S]*?return query select existing_case\.id, existing_case\.case_identifier, captured_event_id, true/);
+  assert.match(migration, /if reading\.consumed_at is not null then raise exception 'Weight reading has already been used for another case\.'/);
+  assert.match(migration, /production_cases_weight_operation_key_idx/);
+  const validation = text('../docs/security/022-scanning-weighing-behavioral-validation.sql');
+  assert.match(validation, /same operation key returns the same durable case\/event without duplicates/);
+  assert.match(validation, /Consumed reading reuse was accepted/);
+  assert.match(validation, /rollback;/);
 });
 
 test('cross-organization scope is enforced in scanner and correction SQL', () => {

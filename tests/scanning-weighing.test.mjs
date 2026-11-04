@@ -5,6 +5,7 @@ import { resolveIdentifier } from '../src/lib/scanning/resolver.ts';
 import { resolveProductionOrderLine } from '../src/lib/scanning/production-order.ts';
 import { manualWeightReading, validateWeight, validateWeightBand, ZM303_STATION } from '../src/lib/scanning/weight.ts';
 import { prepareCasePrintRequest } from '../src/lib/scanning/print-request.ts';
+import { renderBrowserCaseLabel } from '../src/lib/production/case-label.ts';
 import { isDuplicateScan, shouldQueueNoSuffixScan } from '../src/lib/scanning/capture-guard.ts';
 import { readFileSync } from 'node:fs';
 
@@ -102,6 +103,17 @@ test('scanner duplicate cooldown suppresses repeated physical and camera values 
 test('print preparation stays preview-only and never fabricates missing GS1 data', () => {
   const request = prepareCasePrintRequest({ itemDescription:'QA Validation Item', itemId:'QA-ITEM', caseIdentifier:'QA-CASE', packDate:'11/02/2026', productionCode:'QA-PROD', netWeight:17.68, netWeightUom:'LB', gtin:null, gs1BarcodeValue:null, gs1HumanReadable:null });
   assert.equal(request.adapterStatus, 'preview_only'); assert.equal(request.barcodePayload, undefined); assert.equal(request.humanReadableAi, undefined);
+});
+test('case label preview renders without a printer adapter and never initiates browser printing', () => {
+  const label = { itemDescription:'QA Validation Item', itemId:'QA-ITEM-WORK-001', caseIdentifier:'QA-CASE-001', packDate:'11/04/2026', productionCode:'QA-PROD-001', netWeight:20, netWeightUom:'LB', gtin:null, gs1BarcodeValue:null, gs1HumanReadable:null };
+  const request = prepareCasePrintRequest(label);
+  const preview = renderBrowserCaseLabel(label);
+  assert.equal(request.adapterStatus, 'preview_only');
+  assert.match(preview, /QA-ITEM-WORK-001/);
+  assert.match(preview, /QA Validation Item/);
+  assert.match(preview, /QA-CASE-001/);
+  assert.match(preview, /GS1 barcode data unavailable/);
+  assert.doesNotMatch(preview, /window\.print|<script/i);
 });
 test('weight bands do not leak between items and may warn or block only when configured', () => {
   assert.deepEqual(validateWeightBand(3, null), { errors: [], warnings: [] });
