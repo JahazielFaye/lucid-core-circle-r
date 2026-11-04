@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { createSupabaseAdminClient, isSupabaseAdminConfigured } from '@/lib/supabase/admin';
+import { classifyInvitationFailure } from '@/lib/security/invitation-diagnostics';
 import { requireActiveLucidRouteUser, RouteAuthorizationError } from '@/lib/security/route-auth';
 
 export const dynamic = 'force-dynamic';
@@ -31,7 +32,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
-    const { supabase, organizationId } = await requireActiveLucidRouteUser(['lucid_admin']);
+    const { supabase, organizationId, userId } = await requireActiveLucidRouteUser(['lucid_admin']);
     const body = await request.json() as { email?: unknown; displayName?: unknown; role?: unknown };
     const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
     const displayName = typeof body.displayName === 'string' ? body.displayName.trim() : '';
@@ -40,7 +41,18 @@ export async function POST(request: Request) {
     if (!displayName || !roles.includes(role as ManagedRole)) return NextResponse.json({ success: false, error: 'A display name and supported role are required.' }, { status: 400 });
     const admin = createSupabaseAdminClient();
     const { data: invite, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, { data: { display_name: displayName } });
-    if (inviteError || !invite.user) return NextResponse.json({ success: false, error: 'Unable to send the invitation. The email may already have an account; do not retry until an administrator reviews it.' }, { status: 400 });
+    if (inviteError || !invite.user) {
+      const failure = classifyInvitationFailure(inviteError, Boolean(invite.user));
+      console.warn('[user-invitation] auth invite rejected', {
+        actorId: userId,
+        organizationId,
+        category: failure.kind,
+        authCode: failure.code,
+        authStatus: failure.status,
+        receivedUser: failure.receivedUser,
+      });
+      return NextResponse.json({ success: false, error: failure.publicMessage }, { status: failure.responseStatus });
+    }
     const { data: profile, error: profileError } = await supabase.rpc('admin_create_lucid_profile', { p_user_id: invite.user.id, p_display_name: displayName, p_role: role });
     if (profileError) {
       // Do not leave a usable Auth invite without a Lucid profile. If cleanup
