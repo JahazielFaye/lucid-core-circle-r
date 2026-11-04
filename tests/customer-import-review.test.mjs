@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import * as XLSX from 'xlsx';
 import { planCustomerImport } from '../src/lib/integrations/customer-import-planner.ts';
 import { readCustomerPlan, filterCustomerPlan, reviewValue, readCustomerFile, customerProposals } from '../src/lib/integrations/customer-import-review.ts';
+import { readHardenedCsv } from '../src/lib/security/hardened-csv.ts';
 import { CustomerImportPlanReview, CustomerImportReviewWorkspace } from '../src/components/customer-import-plan-review.tsx';
 import { HistoricalImportWorkspace } from '../src/components/historical-import-workspace.tsx';
 import { customer, proposed, request, snapshot } from './customer-import-planner.fixtures.mjs';
@@ -43,11 +43,18 @@ test('500-row plan is paged at 25 rather than mounting the entire dataset',()=>{
 test('CSV text codes and explicit typed field adaptation preserve leading zeros',()=>{
  const bytes=new TextEncoder().encode('source_record_id,customer_code,name,status,po_required\n0000001,0000001,Synthetic,active,false\n');const f=readCustomerFile(bytes.buffer);const rows=customerProposals(f,Object.fromEntries(f.headers.map(h=>[h,h])));assert.equal(rows[0].customer_code,'0000001');assert.equal(rows[0].po_required,false);assert.equal(planCustomerImport(request(rows),snapshot()).rows[0].decision,'CREATE');
 });
-test('numeric spreadsheet identifiers remain numeric for the server planner to reject',()=>{
- const book=XLSX.utils.book_new();XLSX.utils.book_append_sheet(book,XLSX.utils.aoa_to_sheet([['source_record_id','customer_code','name','status'],[123,123,'Synthetic','active']]),'Synthetic');const f=readCustomerFile(XLSX.write(book,{type:'array',bookType:'xlsx'}));const rows=customerProposals(f,Object.fromEntries(f.headers.map(h=>[h,h])));assert.equal(typeof rows[0].customer_code,'number');assert.equal(planCustomerImport(request(rows),snapshot()).rows[0].decision,'BLOCK');
-});
 test('malformed, duplicate-header, empty and excessive source files rejected',()=>{
  for(const csv of ['', 'code,code\na,b', 'code,name\n', 'code,name\n'+Array(501).fill('x,Synthetic').join('\n')])assert.throws(()=>readCustomerFile(new TextEncoder().encode(csv).buffer));
+});
+test('the shared CSV reader handles quoted fields and makes formulas inert for every import consumer',()=>{
+ const bytes=new TextEncoder().encode('\uFEFFcode,notes\nQA-1,"quoted, value"\nQA-2,"=SUM(A1:A2)"\nQA-3,+cmd\nQA-4,-1+2\nQA-5,"@HYPERLINK(""https://example.test"")"\n');
+ const shared=readHardenedCsv(bytes.buffer); const customer=readCustomerFile(bytes.buffer);
+ assert.deepEqual(customer.headers,shared.headers);assert.deepEqual(customer.rows,shared.rows);
+ assert.equal(shared.rows[0][1],'quoted, value');
+ assert.deepEqual(shared.rows.slice(1).map(row=>row[1]),["'=SUM(A1:A2)","'+cmd","'-1+2","'@HYPERLINK(\"https://example.test\")"]);
+});
+test('the shared CSV reader rejects binary content and malformed quoted fields',()=>{
+ for(const csv of ['code,name\nQA,\0binary','code,name\nQA,"unterminated']) assert.throws(()=>readHardenedCsv(new TextEncoder().encode(csv).buffer));
 });
 test('Imports navigation mounts only read-only review and offers no commit action',()=>{
  const html=renderToStaticMarkup(React.createElement(HistoricalImportWorkspace,{role:'lucid_admin'}));assert.match(html,/Read-only preview/);assert.doesNotMatch(html,/Confirm and import|Historical Archive|Importing|SaveButton/);

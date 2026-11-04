@@ -1,7 +1,7 @@
 import 'server-only';
 
-import { createClient } from '@/utils/supabase/server';
 import { commitHistoricalImport, previewHistoricalImport } from '@/lib/integrations/historical-import';
+import { requireActiveLucidRouteUser, type LucidRole, RouteAuthorizationError } from '@/lib/security/route-auth';
 
 export class OperationalWorkflowAuthError extends Error {}
 
@@ -10,7 +10,7 @@ type WorkflowAction =
   | 'record_consumption' | 'record_output' | 'link_case' | 'create_shipment'
   | 'reverse_consumption' | 'allocate_case' | 'remove_allocation' | 'add_shipment_case' | 'add_shipment_pallet' | 'complete_shipment';
 
-const roleByAction: Record<WorkflowAction, string[]> = {
+export const roleByAction: Record<WorkflowAction, LucidRole[]> = {
   create_receipt: ['office', 'leadership', 'lucid_admin'],
   append_receipt_line: ['office', 'leadership', 'lucid_admin'],
   post_inventory_transaction: ['office', 'leadership', 'lucid_admin'],
@@ -27,14 +27,18 @@ const roleByAction: Record<WorkflowAction, string[]> = {
   complete_shipment: ['office', 'leadership', 'lucid_admin'],
 };
 
+const externalActions = new Set<string>([
+  ...Object.keys(roleByAction), 'preview-historical-import', 'commit-historical-import',
+]);
+
 async function context(action: WorkflowAction) {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new OperationalWorkflowAuthError('An authenticated Lucid Core session is required.');
-  const { data: profile, error } = await supabase.from('profiles').select('id, organization_id, active, role').eq('id', user.id).maybeSingle();
-  if (error || !profile?.active) throw new OperationalWorkflowAuthError('An active Lucid Core profile is required.');
-  if (!roleByAction[action].includes(profile.role)) throw new OperationalWorkflowAuthError('Your role cannot perform this operational action.');
-  return { supabase, profile };
+  try {
+    const profile = await requireActiveLucidRouteUser(roleByAction[action]);
+    return { supabase: profile.supabase, profile: { id: profile.userId, organization_id: profile.organizationId, role: profile.role } };
+  } catch (error) {
+    if (error instanceof RouteAuthorizationError) throw new OperationalWorkflowAuthError(error.message);
+    throw error;
+  }
 }
 function controlledSourceSystem(value: unknown) {
   if (value == null || value === '') return 'lucid_core' as const;
@@ -74,6 +78,11 @@ async function rpc(action: WorkflowAction, name: string, args: Record<string, un
 }
 
 export async function runOperationalWorkflow(action: string, body: Record<string, unknown>) {
+  if (!externalActions.has(action)) throw new Error('Unknown operational workflow action.');
+  if (!body || Array.isArray(body)) throw new Error('Operational workflow input must be an object.');
+  for (const identityField of ['actorId','actor_id','organizationId','organization_id','profileId','profile_id']) {
+    if (Object.hasOwn(body, identityField)) throw new Error('Actor and organization are derived from your authenticated session.');
+  }
   const sourceSystem = controlledSourceSystem(body.sourceSystem);
   switch (action) {
     case 'preview-historical-import': return previewHistoricalImport({

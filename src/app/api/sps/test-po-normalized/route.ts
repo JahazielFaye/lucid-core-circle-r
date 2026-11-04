@@ -5,6 +5,7 @@ import {
   getSpsSandboxPurchaseOrderSample,
   SpsTransactionApiError,
 } from '@/lib/integrations/sps-transactions';
+import { requireActiveLucidRouteUser } from '@/lib/security/route-auth';
 
 const SAMPLE_SOURCE_FILE = 'out/PO/PO584615-1-v7.7-BulkImport.xml';
 
@@ -14,6 +15,7 @@ export const runtime = 'nodejs';
 /** Temporary server-only, read-only Sandbox PO normalization diagnostic. */
 export async function GET() {
   try {
+    await requireActiveLucidRouteUser(['lucid_admin']);
     const transaction = await getSpsSandboxPurchaseOrderSample();
     const purchaseOrder = normalizeSpsPurchaseOrder(
       transaction.payload,

@@ -4,6 +4,7 @@ import {
   listSpsSandboxOutboundTransactionEntries,
   SpsTransactionApiError,
 } from '@/lib/integrations/sps-transactions';
+import { requireActiveLucidRouteUser } from '@/lib/security/route-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,6 +15,7 @@ export const runtime = 'nodejs';
  */
 export async function GET() {
   try {
+    await requireActiveLucidRouteUser(['lucid_admin']);
     const transactionList = await listSpsSandboxOutboundTransactionEntries();
 
     return NextResponse.json({

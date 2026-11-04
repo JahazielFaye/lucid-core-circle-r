@@ -1,7 +1,7 @@
 // Browser-safe presentation and file-adapter helpers. No matching or import decisions live here.
-import * as XLSX from 'xlsx';
 import { z } from 'zod';
 import type { CustomerImportPlan, CustomerPlanRow, FieldChange, ImportDecision } from './customer-import-planner';
+import { readHardenedCsv, type HardenedCsvFile } from '../security/hardened-csv';
 
 export const decisionLabels: Record<ImportDecision, string> = { CREATE: 'New customers', UPDATE: 'Proposed changes', SKIP: 'Skipped', BLOCK: 'Needs review' };
 export const decisionExplanations: Record<ImportDecision, string> = {
@@ -43,20 +43,9 @@ export function reviewValue(field: string,value: FieldChange['before']|FieldChan
   if(!publicFields.has(field)&&!reveal)return 'Private value hidden';
   return typeof value==='boolean'?(value?'Yes':'No'):String(value);
 }
-export type CustomerFile = {headers:string[];rows:string[][];numericCells:Record<string,number>};
+export type CustomerFile = HardenedCsvFile & { numericCells: Record<string, number> };
 export function readCustomerFile(buffer: ArrayBuffer):CustomerFile {
-  const book=XLSX.read(buffer,{type:'array',raw:true});const sheet=book.Sheets[book.SheetNames[0]];
-  if(!sheet)throw new Error('The file has no readable worksheet.');
-  const range=XLSX.utils.decode_range(sheet['!ref']||'A1');
-  if(range.e.r>501||range.e.c>99)throw new Error('Use a file with at most 500 customer rows and 100 columns.');
-  const grid=XLSX.utils.sheet_to_json<unknown[]>(sheet,{header:1,defval:'',raw:false,blankrows:true});
-  if(grid.length<2)throw new Error('Add a header row and at least one customer record.');
-  const headers=grid[0].map(v=>String(v));
-  if(headers.some(h=>!h.trim())||new Set(headers).size!==headers.length)throw new Error('Column headings must be present and unique.');
-  const rows:string[][]=[];const numericCells:Record<string,number>={};
-  grid.slice(1).forEach((row,i)=>{if(!row.some(v=>String(v).trim()))return;const next=rows.length;rows.push(headers.map((_,j)=>String(row[j]??'')));headers.forEach((_,j)=>{const c=sheet[XLSX.utils.encode_cell({r:i+1,c:j})];if(c?.t==='n')numericCells[`${next}:${j}`]=c.v as number;});});
-  if(!rows.length||rows.length>500)throw new Error('Use between 1 and 500 customer records.');
-  return {headers,rows,numericCells};
+  return { ...readHardenedCsv(buffer), numericCells: {} };
 }
 /** Explicit file representation adapter. Invalid strings remain invalid for the sole server planner. */
 export function customerProposals(file:CustomerFile,mapping:Record<string,string>) {

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { createClient } from '@/utils/supabase/client';
+import { ScanCapture } from '@/components/scan-capture';
 
 type Role = 'lucid_admin'|'leadership'|'office'|'production';
 type ProductionLine = { id:string; itemCode:string; description:string; quantity:number; uom:string };
@@ -59,6 +60,7 @@ export function ProductionGenealogyWorkspace({ organizationId, role, orderId, li
   const hasAuthoritativeIssue = (consumptionId:string) => ledgerLines.some(line=>line.production_consumption_id===consumptionId&&!line.reversal_of_inventory_line_id);
 
   return <section className="production-genealogy master-data-workspace">
+    <ScanCapture organizationId={organizationId} label="Scan production item, input lot identifier, or case identifier" onResolved={result=>{if(result.validationStatus==='blocked'){setError(result.blockingErrors[0]||'Barcode not recognized.');return;}const matchingLine=lines.find(line=>line.itemCode===result.itemCode);if(matchingLine){setRunLineId(matchingLine.id);setOutputLineId(matchingLine.id);setAllocationLineId(matchingLine.id);}setMessage(result.warnings[0]||`✓ ${result.itemDescription||result.itemCode||'Identifier'} accepted.`);}} />
     <header className="genealogy-heading"><div><span className="kicker">Production genealogy</span><h2>Connect inputs, output, and finished cases.</h2><p>Legacy cases stay visible as unlinked until their actual production relationship is recorded.</p></div></header>
     {message&&<p className="master-data-message">{message}</p>}{error&&<p className="master-data-error">{error}</p>}
     <section className="genealogy-flow surface"><span>Input lot(s)</span><b>→</b><span>Production run</span><b>→</b><span>Output lot</span><b>→</b><span>Produced cases</span></section>

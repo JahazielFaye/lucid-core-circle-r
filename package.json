@@ -10,18 +10,22 @@
     "test:import-review": "node --import ./tests/register-server-only.mjs --test tests/customer-import-planner.test.mjs tests/customer-import-review.test.mjs",
     "preview:import-review": "node --import ./tests/register-server-only.mjs tests/customer-import-review.preview.mjs",
     "test:import-planner": "node --import ./tests/register-server-only.mjs --test tests/customer-import-planner.test.mjs",
-    "test:responsive-navigation": "node --test tests/responsive-navigation.test.mjs"
+    "test:responsive-navigation": "node --test tests/responsive-navigation.test.mjs",
+    "test:scanning-weighing": "node --import ./tests/register-server-only.mjs --test tests/scanning-weighing.test.mjs",
+    "test:security-release-gate": "node --test tests/security-release-gate.test.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.3",
+    "@types/papaparse": "^5.3.16",
+    "@zxing/browser": "^0.2.1",
     "fast-xml-parser": "^5.11.2",
     "lucide-react": "^0.468.0",
-    "next": "16.4.0",
+    "next": "^16.4.4",
+    "papaparse": "^5.5.3",
     "react": "19.2.0",
     "react-dom": "19.2.0",
-    "xlsx": "^0.18.5",
-    "zod": "3.23.8"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "24.7.2",

@@ -4,6 +4,7 @@ import {
   getSpsSandboxAccessToken,
   getSpsTokenMetadata,
 } from '@/lib/integrations/sps-auth';
+import { requireActiveLucidRouteUser, RouteAuthorizationError } from '@/lib/security/route-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -14,6 +15,7 @@ export const runtime = 'nodejs';
  */
 export async function GET() {
   try {
+    await requireActiveLucidRouteUser(['lucid_admin']);
     const token = await getSpsSandboxAccessToken();
     const metadata = getSpsTokenMetadata(token);
 
@@ -35,7 +37,7 @@ export async function GET() {
         success: false,
         error: message,
       },
-      { status: message.includes('configuration') ? 500 : 502 },
+      { status: error instanceof RouteAuthorizationError ? error.status : message.includes('configuration') ? 500 : 502 },
     );
   }
 }

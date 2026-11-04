@@ -56,6 +56,31 @@ export async function addLucidProductionCase(
   });
 }
 
+export async function createLucidProductionCaseFromWeightReading(
+  orderId: string,
+  orderLineId: string,
+  caseIdentifier: string,
+  quantity: number,
+  netWeight: number,
+  productionLotId: string,
+  operationKey: string,
+) {
+  if (!operationKey.trim()) throw new Error('Capture a fresh weight before creating a case.');
+  const reading = await callProductionRpc('create_lucid_manual_weight_reading', { p_order_id: orderId, p_net_weight: netWeight, p_operation_key: operationKey.trim() });
+  if (!reading?.weight_reading_id) throw new Error('The weight reading could not be captured.');
+  return callProductionRpc('create_lucid_production_case_from_weight_reading', {
+    p_order_id: orderId,
+    p_order_line_id: orderLineId,
+    p_case_identifier: caseIdentifier.trim(),
+    p_quantity: quantity,
+    p_net_weight: netWeight,
+    p_production_lot_id: productionLotId,
+    p_operation_key: operationKey.trim(),
+    p_weight_reading_id: reading.weight_reading_id,
+  });
+}
+
+
 export async function createOrGetLucidProductionLot(orderId: string, orderLineId: string, lotCode: string) {
   if (!lotCode.trim()) throw new Error('A production lot or Prod Code is required.');
   return callProductionRpc('create_or_get_lucid_production_lot', {

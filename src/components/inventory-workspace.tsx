@@ -7,11 +7,12 @@ type Role = 'lucid_admin'|'leadership'|'office'|'production';
 type ReceiptLine = { itemCode:string; quantity:string; uom:string; weight:string; lot:string; internalLot:string; cost:string; charge:string };
 const blankLine = (): ReceiptLine => ({ itemCode:'', quantity:'', uom:'CS', weight:'', lot:'', internalLot:'', cost:'', charge:'' });
 
-export function InventoryWorkspace({ organizationId, role }: { organizationId:string; role:Role }) {
+export function InventoryWorkspace({ organizationId, role, scannedItem }: { organizationId:string; role:Role; scannedItem?: { itemCode:string; uom?:string } | null }) {
   const supabase = useMemo(() => createClient(), []);
   const [tab, setTab] = useState<'receiving'|'item'|'lot'|'transactions'|'movements'>('receiving');
   const [transactions, setTransactions] = useState<any[]>([]); const [lots, setLots] = useState<any[]>([]); const [lines, setLines] = useState<any[]>([]); const [items, setItems] = useState<any[]>([]);
   const [receipt, setReceipt] = useState({ number:'', vendor:'', po:'', warehouse:'', qa:false, qaReference:'' }); const [receiptLines, setReceiptLines] = useState<ReceiptLine[]>([blankLine()]);
+  useEffect(()=>{ if(!scannedItem?.itemCode) return; setReceiptLines(current=>current.map((line,index)=>index===0&&!line.itemCode?{...line,itemCode:scannedItem.itemCode,uom:scannedItem.uom||line.uom}:line)); setTab('receiving'); setMessage(`Item ${scannedItem.itemCode} added to the receipt draft. Review all fields before saving.`); },[scannedItem]);
   const [activeDraftId, setActiveDraftId] = useState<string|null>(null);
   const [qaFixtures, setQaFixtures] = useState({ customer:false, shipTo:false, item:false, customerItem:false });
   const [saving, setSaving] = useState(false); const [message, setMessage] = useState<string|null>(null); const [error, setError] = useState<string|null>(null);

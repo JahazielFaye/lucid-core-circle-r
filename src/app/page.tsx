@@ -6,7 +6,7 @@ import { orders as seedOrders, pallets as seedPallets } from '@/lib/core/mock';
 import type { Pallet, UnifiedOrder } from '@/lib/core/types';
 import { createClient } from '@/utils/supabase/client';
 import { createDirectConversation, loadSharedMessaging, markSharedMessagesRead, sendSharedMessage, type SharedMessagingSnapshot } from '@/lib/supabase/messaging';
-import { openBrowserCaseLabel, startBrowserCaseLabelPrint, type CaseLabelData } from '@/lib/production/case-label';
+import type { CaseLabelData } from '@/lib/production/case-label';
 import { MasterDataSetup } from '@/components/master-data-setup';
 import { InventoryWorkspace } from '@/components/inventory-workspace';
 import { ProductionGenealogyWorkspace } from '@/components/production-genealogy-workspace';
@@ -15,6 +15,10 @@ import { HistoricalImportWorkspace } from '@/components/historical-import-worksp
 import { OperationsReports } from '@/components/operations-reports';
 import { ReplacementReadiness } from '@/components/replacement-readiness';
 import { ControlledQaOrderWorkspace } from '@/components/controlled-qa-order-workspace';
+import { InventoryScanPanel } from '@/components/inventory-scan-panel';
+import { HardwareDiagnostics } from '@/components/hardware-diagnostics';
+import { manualWeightReading, validateWeight, ZM303_STATION } from '@/lib/scanning/weight';
+import { prepareCasePrintRequest } from '@/lib/scanning/print-request';
 
 type Role = 'lucid_admin' | 'leadership' | 'office' | 'production';
 type Section = 'Home' | 'Orders' | 'Exceptions' | 'Production' | 'Inventory' | 'Pallets' | 'Shipments' | 'Trace' | 'Reports' | 'Imports' | 'Samples' | 'Documents' | 'Office' | 'Logistics' | 'Sales' | 'Roadmap' | 'MasterData' | 'System';
@@ -1480,7 +1484,7 @@ export default function Home() {
 
 
           {section === 'Inventory' && (profile
-            ? <InventoryWorkspace organizationId={profile.organization_id} role={role} />
+            ? <InventoryScanningWorkspace organizationId={profile.organization_id} role={role} />
             : <Empty title="Inventory is unavailable" text="Sign in with an active Lucid Core account to view inventory." />
           )}
 
@@ -1529,6 +1533,7 @@ export default function Home() {
           {section === 'MasterData' && profile && <MasterDataSetup organizationId={profile.organization_id} role={role} />}
 
           {section === 'System' && <>
+            {profile && <HardwareDiagnostics organizationId={profile.organization_id} role={role} />}
             <div className="page-heading"><div><span className="kicker">Lucid Admin</span><h1>Operational controls and integration boundaries.</h1><p>Organization-wide operating records are managed in the relevant Lucid workspaces. Browser-only setup controls are intentionally unavailable in the pilot.</p></div></div>
 
             <div className="admin-subheading"><span className="kicker">Access</span><h2>Authenticated account</h2></div>
@@ -1750,6 +1755,11 @@ function IncomingOrdersQueue({ orders, lines, exceptions, onOpenOrder }: {
   </section>;
 }
 
+function InventoryScanningWorkspace({ organizationId, role }: { organizationId:string; role:Role }) {
+  const [scannedItem, setScannedItem] = useState<{ itemCode:string; uom?:string } | null>(null);
+  return <><InventoryScanPanel organizationId={organizationId} onItemResolved={(itemCode,uom)=>setScannedItem({itemCode,uom})}/><InventoryWorkspace organizationId={organizationId} role={role} scannedItem={scannedItem}/></>;
+}
+
 function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, onBack, onRefresh, onStartPalletizing }: {
   order: OperationalOrder;
   cases: ProductionCase[];
@@ -1764,6 +1774,7 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
   const [error, setError] = useState<string | null>(null);
   const [caseIdentifier, setCaseIdentifier] = useState('');
   const [netWeight, setNetWeight] = useState('');
+  const [weightOperationKey, setWeightOperationKey] = useState('');
   const [weighModeLineId, setWeighModeLineId] = useState('');
   const [weighModeLot, setWeighModeLot] = useState('');
   const [labelPreviewCaseId, setLabelPreviewCaseId] = useState('');
@@ -1818,19 +1829,25 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
     const weight = Number(netWeight);
     if (!weighModeLineId) { setError('Start Weigh Mode for the item you are producing.'); return; }
     if (!weighModeLot.trim()) { setError('Select or enter a production lot / Prod Code.'); return; }
-    if (!Number.isFinite(weight) || weight <= 0) { setError('Enter a net weight greater than zero.'); return; }
+    const reading = manualWeightReading(weight);
+    const weightValidation = validateWeight(reading);
+    if (!Number.isFinite(weight) || !weightValidation.valid) { setError(weightValidation.errors[0] || 'Enter a net weight greater than zero.'); return; }
     if (Math.round(weight * 100) / 100 !== weight) { setError('Use no more than two decimal places for net weight.'); return; }
+    const operationKey = weightOperationKey || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    if (!weightOperationKey) setWeightOperationKey(operationKey);
     const result = await save(() => request(`/api/production/orders/${order.id}/cases`, {
         orderLineId: weighModeLineId,
         caseIdentifier,
         quantity,
         netWeight: weight,
         lotCode: weighModeLot,
+        operationKey,
       }));
     if (typeof result?.production_case_id === 'string') setLabelPreviewCaseId(result.production_case_id);
     if (result) {
       setCaseIdentifier('');
       setNetWeight('');
+      setWeightOperationKey('');
       window.setTimeout(() => weightInputRef.current?.focus(), 0);
     }
   };
@@ -1839,12 +1856,14 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
     setWeighModeLot(lots.find(lot => lot.order_line_id === line.id && lot.status === 'active')?.lot_code || line.lotCode || '');
     setCaseIdentifier('');
     setNetWeight('');
+    setWeightOperationKey('');
     setError(null);
   };
   const endWeighMode = () => {
     setWeighModeLineId('');
     setCaseIdentifier('');
     setNetWeight('');
+    setWeightOperationKey('');
     setError(null);
   };
   const startProduction = async () => {
@@ -1869,17 +1888,11 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
     gs1HumanReadable: null,
   });
   const printLabel = async (productionCase: ProductionCase, line: ProductionLine) => {
-    const printWindow = openBrowserCaseLabel(labelData(productionCase, line));
-    if (!printWindow) {
-      setError('Pop-up blocked. Allow pop-ups for Lucid Core to print labels.');
-      return;
-    }
-    const printStarted = await startBrowserCaseLabelPrint(printWindow);
-    if (!printStarted) {
-      setError('The label window could not start printing. Keep the window open and try again.');
-      return;
-    }
-    await save(() => request(`/api/production/cases/${productionCase.id}/label-printed`));
+    const label = labelData(productionCase, line);
+    // The request remains preview-only until Circle R confirms the printer connection and template.
+    prepareCasePrintRequest(label, ZM303_STATION.id);
+    setLabelPreviewCaseId(productionCase.id);
+    setError('Printer adapter is not configured. The label is available for preview only.');
   };
   const previewCase = labelPreviewCaseId ? cases.find(productionCase => productionCase.id === labelPreviewCaseId) : undefined;
   const previewLine = previewCase ? order.lines.find(line => line.id === previewCase.order_line_id) : undefined;
