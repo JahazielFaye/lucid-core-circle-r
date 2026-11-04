@@ -19,6 +19,7 @@ import { InventoryScanPanel } from '@/components/inventory-scan-panel';
 import { HardwareDiagnostics } from '@/components/hardware-diagnostics';
 import { AdminUsersWorkspace } from '@/components/admin-users-workspace';
 import { ScanCapture } from '@/components/scan-capture';
+import { resolveProductionOrderLine } from '@/lib/scanning/production-order';
 import { manualWeightReading, validateWeight, ZM303_STATION } from '@/lib/scanning/weight';
 import { prepareCasePrintRequest } from '@/lib/scanning/print-request';
 import { validateWeightBand, type WeightBand } from '@/lib/scanning/weight';
@@ -1354,13 +1355,15 @@ export default function Home() {
             </button>
             {!desktopNavigationCollapsed && navigationHintVisible && <div className="desktop-nav-hint" role="status"><span>Need more space? Collapse the navigation anytime.</span><button type="button" onClick={dismissNavigationHint} aria-label="Dismiss navigation hint">×</button></div>}
           </div>
-          <nav>
-            <span className="nav-group-label" aria-hidden={desktopNavigationCollapsed}>Operations</span>
-            {(['Home','Orders','Exceptions','Production','Inventory','Pallets','Shipments','Trace','Reports'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')} aria-label={desktopNavigationCollapsed ? sectionLabels[item] : undefined} title={desktopNavigationCollapsed ? sectionLabels[item] : undefined} data-tooltip={sectionLabels[item]}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
-            <span className="nav-group-label" aria-hidden={desktopNavigationCollapsed}>Records & Growth</span>
-            {(['Samples','Documents','Office','Logistics','Sales'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')} aria-label={desktopNavigationCollapsed ? sectionLabels[item] : undefined} title={desktopNavigationCollapsed ? sectionLabels[item] : undefined} data-tooltip={sectionLabels[item]}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
-            <span className="nav-group-label" aria-hidden={desktopNavigationCollapsed}>Management</span>
-            {(['Roadmap','MasterData','Imports','System'] as Section[]).filter(i=>visibleSections.includes(i)).map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')} aria-label={desktopNavigationCollapsed ? sectionLabels[item] : undefined} title={desktopNavigationCollapsed ? sectionLabels[item] : undefined} data-tooltip={sectionLabels[item]}><SectionIcon name={item} /><span>{sectionLabels[item]}</span></button>)}
+          <nav className="desktop-navigation-list">
+            {mobileNavigationGroups.map(group => {
+              const sections = group.sections.filter(item => visibleSections.includes(item));
+              if (!sections.length) return null;
+              return <div className="desktop-nav-group" key={group.label}>
+                <span className="nav-group-label" aria-hidden={desktopNavigationCollapsed}>{group.label}</span>
+                {sections.map(item => <button key={item} className={section === item ? 'nav-item active' : 'nav-item'} onClick={() => setWorkspaceSection(item, 'side navigation')} aria-label={desktopNavigationCollapsed ? sectionLabels[item] : undefined} title={desktopNavigationCollapsed ? sectionLabels[item] : undefined} data-tooltip={sectionLabels[item]}><SectionIcon name={item} /><span>{sectionLabels[item]}</span>{item === 'Exceptions' && unresolvedIssues.length > 0 && <b>{unresolvedIssues.length}</b>}</button>)}
+              </div>;
+            })}
           </nav>
           <div className="side-help"><strong>Need help?</strong><span>Lucid Core only shows the tools needed for your role.</span></div>
         </aside>
@@ -1890,9 +1893,16 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
     setError(null);
   };
   const handleItemScan = (scan: NormalizedScanResult) => {
-    if (scan.validationStatus === 'blocked' || !scan.itemCode) { setScanStatus(scan); setError(scan.blockingErrors[0] || 'That item could not be recognized.'); return; }
-    const line = order.lines.find(candidate => candidate.nativeItemId === scan.itemId || productionItemIdentifier(candidate) === scan.itemCode || candidate.externalSku === scan.itemCode);
-    if (!line) { setScanStatus(scan); setError(`${scan.itemDescription || scan.itemCode} is not on this production order.`); return; }
+    const resolution = resolveProductionOrderLine(scan, order.lines.map(candidate => ({
+      id: candidate.id,
+      nativeItemId: candidate.nativeItemId,
+      itemCode: productionItemIdentifier(candidate),
+      externalSku: candidate.externalSku,
+      uom: candidate.uom,
+    })));
+    if (!resolution.line) { setScanStatus(scan); setError(resolution.error); return; }
+    const line = order.lines.find(candidate => candidate.id === resolution.line.id);
+    if (!line) { setScanStatus(scan); setError('That item could not be selected on this production order.'); return; }
     setScanStatus(scan); setError(null); startWeighMode(line);
   };
   const openCorrection = async (productionCase: ProductionCase) => {

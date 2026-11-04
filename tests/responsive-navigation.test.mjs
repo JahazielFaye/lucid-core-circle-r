@@ -43,3 +43,13 @@ test('only Inventory data regions scroll horizontally on narrow viewports', () =
   assert.match(styles, /\.master-table-wrap\{width:100%;max-width:100%;overflow-x:auto;overflow-y:hidden;overscroll-behavior-x:contain/);
   assert.match(styles, /\.app-shell,\.workspace,\.content,\.master-data-workspace,\.master-data-surface\{min-width:0;max-width:100%\}/);
 });
+
+test('desktop navigation remains a natural, viewport-height rail rather than stretching the page', () => {
+  assert.match(page, /className="desktop-navigation-list"/);
+  assert.match(page, /const sections = group\.sections\.filter\(item => visibleSections\.includes\(item\)\);\s*if \(!sections\.length\) return null;/);
+  assert.match(styles, /\.side-nav\{height:calc\(100vh - 72px\);position:sticky;top:72px;align-self:start;justify-content:flex-start;min-height:0;overflow:hidden\}/);
+  assert.match(styles, /\.side-nav \.desktop-navigation-list\{position:static;flex:1;min-height:0;width:100%;overflow-y:auto/);
+  assert.match(styles, /\.desktop-nav-group\+\.desktop-nav-group\{margin-top:8px\}/);
+  assert.match(styles, /\.workspace\.nav-is-collapsed \.side-nav,\.workspace\.nav-auto \.side-nav\{overflow:hidden\}/);
+  assert.match(styles, /\.workspace\.nav-is-collapsed \.side-nav \.desktop-navigation-list,.workspace\.nav-auto \.side-nav \.desktop-navigation-list\{position:static;align-items:center\}/);
+});

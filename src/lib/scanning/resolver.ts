@@ -6,8 +6,19 @@ export type ResolvableIdentifier = { item_id: string; identifier_type: string; i
 export function resolveIdentifier(rawValue: string, scanSource: ScanSource, identifiers: ResolvableIdentifier[]): NormalizedScanResult {
   if (rawValue.length > 512) return { rawValue: rawValue.slice(0, 512), scanSource, warnings: [], blockingErrors: ['Barcode payload is too long.'], validationStatus: 'blocked' };
   const raw = rawValue.trim(); const parsed = parseGs1(raw);
-  const candidateValues = [raw, parsed?.itemIdentifier].filter((value): value is string => Boolean(value));
-  const matches = identifiers.filter(identifier => identifier.status === 'active' && identifier.item?.status !== 'inactive' && candidateValues.includes(identifier.identifier_value));
+  const active = identifiers.filter(identifier => identifier.status === 'active' && identifier.item?.status !== 'inactive');
+  // Deterministic precedence: an exact configured identifier wins, followed by an
+  // explicit GS1 item identifier, then an exact native item code. No partial,
+  // fuzzy, or check-digit-corrected lookup is performed.
+  const configured = active.filter(identifier => identifier.identifier_type !== 'internal_item_code');
+  const exactConfigured = configured.filter(identifier => identifier.identifier_value === raw);
+  const gs1Configured = exactConfigured.length === 0 && parsed?.itemIdentifier
+    ? configured.filter(identifier => identifier.identifier_value === parsed.itemIdentifier)
+    : [];
+  const nativeCode = exactConfigured.length === 0 && gs1Configured.length === 0
+    ? active.filter(identifier => identifier.identifier_type === 'internal_item_code' && identifier.identifier_value === raw)
+    : [];
+  const matches = exactConfigured.length ? exactConfigured : gs1Configured.length ? gs1Configured : nativeCode;
   const base: NormalizedScanResult = { rawValue, scanSource, lot: parsed?.lot, serial: parsed?.serial, weight: parsed?.netWeight, weightUom: parsed?.weightUom, packDate: parsed?.packDate, sscc: parsed?.sscc, warnings: [...(parsed?.warnings || [])], blockingErrors: [], validationStatus: 'unknown' };
   if (!raw) return { ...base, blockingErrors: ['Barcode not recognized.'], validationStatus: 'blocked' };
   if (matches.length === 0) return { ...base, blockingErrors: ['Barcode not recognized.'], validationStatus: 'blocked' };

@@ -15,7 +15,25 @@ type BarcodeDetectorConstructor = new (options?: unknown) => BarcodeDetectorInst
 export function ScanCapture({ organizationId, onResolved, label = 'Scan or enter barcode', allowCamera = true, className = '' }: Props) {
   const supabase = useMemo(() => createClient(), []); const input = useRef<HTMLInputElement>(null); const video = useRef<HTMLVideoElement>(null); const stream = useRef<MediaStream | null>(null); const timer = useRef<number | null>(null); const detector = useRef<{ stop: () => void } | null>(null); const lastKeyAt = useRef(0); const rapidCharacters = useRef(0); const recentScan = useRef<{ value:string; at:number } | null>(null);
   const [value, setValue] = useState(''); const [identifiers, setIdentifiers] = useState<ResolvableIdentifier[]>([]); const [message, setMessage] = useState(''); const [cameraOpen, setCameraOpen] = useState(false); const [torchSupported, setTorchSupported] = useState(false); const [torchEnabled, setTorchEnabled] = useState(false);
-  useEffect(() => { let current = true; void (async () => { const result = await supabase.from('item_identifiers').select('item_id,identifier_type,identifier_value,uom,verified,status,source_system,items(item_code,description,status)').eq('organization_id', organizationId); if (!current || result.error) return; setIdentifiers((result.data || []).map(row => ({ ...row, item: Array.isArray(row.items) ? row.items[0] : row.items })) as ResolvableIdentifier[]); })(); return () => { current = false; }; }, [organizationId, supabase]);
+  useEffect(() => { let current = true; void (async () => {
+    const [identifierResult, itemResult] = await Promise.all([
+      supabase.from('item_identifiers').select('item_id,identifier_type,identifier_value,uom,verified,status,source_system,items(item_code,description,status)').eq('organization_id', organizationId),
+      supabase.from('items').select('id,item_code,description,status').eq('organization_id', organizationId).eq('status', 'active'),
+    ]);
+    if (!current || identifierResult.error || itemResult.error) return;
+    const configured = (identifierResult.data || []).map(row => ({ ...row, item: Array.isArray(row.items) ? row.items[0] : row.items })) as ResolvableIdentifier[];
+    const nativeCodes: ResolvableIdentifier[] = (itemResult.data || []).map(item => ({
+      item_id: item.id,
+      identifier_type: 'internal_item_code',
+      identifier_value: item.item_code,
+      uom: null,
+      verified: true,
+      status: 'active',
+      source_system: 'lucid_core',
+      item: { item_code: item.item_code, description: item.description, status: item.status },
+    }));
+    setIdentifiers([...configured, ...nativeCodes]);
+  })(); return () => { current = false; }; }, [organizationId, supabase]);
   const cancelQueuedCompletion = () => { if (timer.current) { window.clearTimeout(timer.current); timer.current = null; } };
   const complete = (raw: string, source: ScanSource) => { cancelQueuedCompletion(); const now = Date.now(); if (isDuplicateScan(recentScan.current, raw, now)) return resolveIdentifier(raw, source, identifiers); recentScan.current = { value: raw, at: now }; const result = resolveIdentifier(raw, source, identifiers); setMessage(result.blockingErrors[0] || result.warnings[0] || (result.validationStatus === 'accepted' ? '✓ Item accepted' : '')); onResolved(result); return result; };
   const queueCompletion = (nextValue: string) => { if (!shouldQueueNoSuffixScan(rapidCharacters.current)) return; if (timer.current) window.clearTimeout(timer.current); timer.current = window.setTimeout(() => { if (nextValue.trim()) complete(nextValue, 'physical_scanner'); }, 180); };

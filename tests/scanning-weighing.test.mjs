@@ -2,9 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseGs1, isValidGtin } from '../src/lib/scanning/gs1.ts';
 import { resolveIdentifier } from '../src/lib/scanning/resolver.ts';
+import { resolveProductionOrderLine } from '../src/lib/scanning/production-order.ts';
 import { manualWeightReading, validateWeight, validateWeightBand, ZM303_STATION } from '../src/lib/scanning/weight.ts';
 import { prepareCasePrintRequest } from '../src/lib/scanning/print-request.ts';
 import { isDuplicateScan, shouldQueueNoSuffixScan } from '../src/lib/scanning/capture-guard.ts';
+import { readFileSync } from 'node:fs';
+
+const productionWorkspace = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
 
 const aliases = [
   { item_id: 'pork', identifier_type: 'gtin', identifier_value: '000000000010174082', uom: 'CS', verified: false, status: 'active', item: { item_code: '10174082', description: 'Pork Belly', status: 'active' } },
@@ -28,6 +32,33 @@ test('unknown, inactive, and ambiguous identifiers are blocked', () => {
   assert.equal(resolveIdentifier('inactive', 'manual', [...aliases, {...aliases[0], identifier_value:'inactive', status:'inactive'}]).validationStatus, 'blocked');
   const ambiguous = resolveIdentifier('same', 'manual', [...aliases, {...aliases[0], item_id:'other', identifier_value:'same'}, {...aliases[1], item_id:'else', identifier_value:'same'}]);
   assert.equal(ambiguous.validationStatus, 'blocked');
+});
+test('an exact active native item code resolves only after configured aliases', () => {
+  const nativeCode = { item_id: 'qa-item', identifier_type: 'internal_item_code', identifier_value: 'QA-ITEM-WORK-001', uom: null, verified: true, status: 'active', item: { item_code: 'QA-ITEM-WORK-001', description: 'QA Validation Item', status: 'active' } };
+  const result = resolveIdentifier('QA-ITEM-WORK-001', 'manual', [...aliases, nativeCode]);
+  assert.equal(result.validationStatus, 'accepted');
+  assert.equal(result.itemId, 'qa-item');
+  assert.equal(result.itemCode, 'QA-ITEM-WORK-001');
+  assert.equal(result.uom, undefined);
+  assert.equal(result.identifierType, 'internal_item_code');
+  const configuredWins = resolveIdentifier('QA-ITEM-WORK-001', 'manual', [...aliases, nativeCode, { ...aliases[0], item_id: 'configured-item', identifier_value: 'QA-ITEM-WORK-001', uom: 'CS' }]);
+  assert.equal(configuredWins.itemId, 'configured-item');
+  assert.equal(configuredWins.uom, 'CS');
+});
+test('production scan selection is exact, order-scoped, and UOM-safe before Weigh Mode', () => {
+  const qaScan = resolveIdentifier('QA-ITEM-WORK-001', 'manual', [{ item_id: 'qa-item', identifier_type: 'internal_item_code', identifier_value: 'QA-ITEM-WORK-001', uom: null, verified: true, status: 'active', item: { item_code: 'QA-ITEM-WORK-001', description: 'QA Validation Item', status: 'active' } }]);
+  const currentOrder = [{ id: 'qa-line', nativeItemId: 'qa-item', itemCode: 'QA-ITEM-WORK-001', externalSku: 'QA-SKU-WORK-001', uom: 'CS' }];
+  assert.equal(resolveProductionOrderLine(qaScan, currentOrder).line?.id, 'qa-line');
+  assert.match(resolveProductionOrderLine(qaScan, [{ id: 'foreign-line', nativeItemId: 'other-item', itemCode: 'OTHER', uom: 'CS' }]).error, /not on this production order/);
+  const uomAlias = { ...qaScan, uom: 'EA', identifierType: 'other' };
+  assert.match(resolveProductionOrderLine(uomAlias, currentOrder).error, /not on this production order/);
+  assert.match(resolveProductionOrderLine(qaScan, [...currentOrder, { ...currentOrder[0], id: 'qa-line-ea', uom: 'EA' }]).error, /more than one order line/);
+});
+test('a failed production item resolution stops before Weigh Mode or any mutation path', () => {
+  const unknown = resolveIdentifier('NOT-ON-ORDER', 'manual', aliases);
+  assert.match(resolveProductionOrderLine(unknown, [{ id: 'qa-line', nativeItemId: 'qa-item', itemCode: 'QA-ITEM-WORK-001', uom: 'CS' }]).error, /Barcode not recognized/);
+  assert.match(productionWorkspace, /if \(!resolution\.line\) \{ setScanStatus\(scan\); setError\(resolution\.error\); return; \}/);
+  assert.match(productionWorkspace, /setScanStatus\(scan\); setError\(null\); startWeighMode\(line\);/);
 });
 test('GS1 only parses explicit AI streams, including FNC1 separated variable fields', () => {
   const gs = parseGs1(`010123456789012313261001320200176821SERIAL${String.fromCharCode(29)}10LOT-1`);
