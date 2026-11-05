@@ -46,12 +46,15 @@ test('operator UI resolves scans before capture and labels manual entry honestly
 
 test('case label previews are rendered in-app and remain separate from unavailable physical printing', () => {
   assert.match(production, /renderBrowserCaseLabel/);
+  assert.match(production, /className="case-label-preview-canvas"/);
   assert.match(production, /className="case-label-frame"/);
   assert.match(production, /Physical printing is not configured/);
   assert.doesNotMatch(production, /startBrowserCaseLabelPrint|window\.print/);
   const styles = text('../src/app/globals.css');
-  assert.match(styles, /\.case-label-frame\{display:block;width:min\(4in,100%\);height:auto;aspect-ratio:2\/1;min-width:0/);
-  assert.doesNotMatch(styles, /\.case-label-frame\{[^}]*min-width:4in/);
+  assert.match(styles, /\.case-label-frame-wrap\{--label-preview-scale:1;width:100%;height:2in;position:relative;overflow:hidden/);
+  assert.match(styles, /\.case-label-preview-canvas\{position:absolute;top:0;left:50%;width:4in;height:2in;transform:translateX\(-50%\) scale\(var\(--label-preview-scale\)\)/);
+  assert.match(styles, /@media\(max-width:620px\)\{\.case-label-frame-wrap\{--label-preview-scale:\.88;height:1\.76in\}\}/);
+  assert.match(styles, /@media\(max-width:400px\)\{\.case-label-frame-wrap\{--label-preview-scale:\.82;height:1\.64in\}\}/);
 });
 
 test('the atomic weight-reading RPC prevents reuse and same-key retries remain idempotent', () => {
