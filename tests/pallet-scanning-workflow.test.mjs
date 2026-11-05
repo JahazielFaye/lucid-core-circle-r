@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { activePalletCaseIds } from '../src/lib/production/pallet-membership.ts';
 
 const text = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const migration = text('../supabase/migrations/027_pallet_scanning_workflow.sql');
@@ -54,6 +55,26 @@ test('pallet preview avoids newer collection/string helpers that can crash older
   assert.doesNotMatch(barcode, /\.flatMap\(/);
   assert.match(barcode, /for \(const character of encoded\)/);
   assert.doesNotMatch(page, /\.at\(-1\)/);
+});
+
+test('removed pallet assignment history never contributes to current pallet membership or totals', () => {
+  const assignments = [
+    { pallet_id: 'pallet-1', production_case_id: 'case-1', status: 'removed' },
+    { pallet_id: 'pallet-2', production_case_id: 'case-1', status: 'active' },
+  ];
+  const sourceMembers = activePalletCaseIds(assignments, 'pallet-1');
+  const destinationMembers = activePalletCaseIds(assignments, 'pallet-2');
+  const cases = [{ id: 'case-1', quantity: 1, net_weight: 20.5 }];
+  const sourceCases = cases.filter(productionCase => sourceMembers.has(productionCase.id));
+  const destinationCases = cases.filter(productionCase => destinationMembers.has(productionCase.id));
+  assert.deepEqual([...sourceMembers], []);
+  assert.deepEqual([...destinationMembers], ['case-1']);
+  assert.equal(sourceCases.length, 0);
+  assert.equal(sourceCases.reduce((total, productionCase) => total + productionCase.net_weight, 0), 0);
+  assert.equal(destinationCases.length, 1);
+  assert.equal(destinationCases.reduce((total, productionCase) => total + productionCase.net_weight, 0), 20.5);
+  assert.equal([...assignments].filter(assignment => assignment.status === 'active').length, 1);
+  assert.match(page, /activePalletCaseIds\(assignments, selectedPallet\.id\)/);
 });
 
 test('every pallet RPC signature explicitly revokes default public and anonymous execution', () => {

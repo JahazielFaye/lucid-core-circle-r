@@ -20,6 +20,7 @@ import { HardwareDiagnostics } from '@/components/hardware-diagnostics';
 import { AdminUsersWorkspace } from '@/components/admin-users-workspace';
 import { ScanCapture } from '@/components/scan-capture';
 import { LucidInternalBarcode } from '@/components/lucid-internal-barcode';
+import { activePalletCaseIds } from '@/lib/production/pallet-membership';
 import { resolveProductionOrderLine } from '@/lib/scanning/production-order';
 import { manualWeightReading, validateWeight, ZM303_STATION } from '@/lib/scanning/weight';
 import { prepareCasePrintRequest } from '@/lib/scanning/print-request';
@@ -2064,7 +2065,7 @@ function PalletBreakdownHub({ organizationId, orders, pallets, cases, assignment
 
   if (selectedPallet) {
     const order = orders.find(candidate => candidate.id === selectedPallet.order_id);
-    const assignedCaseIds = new Set(assignments.filter(assignment => assignment.pallet_id === selectedPallet.id && assignment.production_case_id).map(assignment => assignment.production_case_id));
+    const assignedCaseIds = activePalletCaseIds(assignments, selectedPallet.id);
     const assignedCases = cases.filter(productionCase => assignedCaseIds.has(productionCase.id));
     const availableCases = cases.filter(productionCase => productionCase.order_id === selectedPallet.order_id && productionCase.status === 'produced' && !productionCase.pallet_id);
     const totalCases = assignedCases.reduce((total, productionCase) => total + productionCase.quantity, 0);
