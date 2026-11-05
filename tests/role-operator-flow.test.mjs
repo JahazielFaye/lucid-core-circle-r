@@ -49,6 +49,9 @@ test('case label previews are rendered in-app and remain separate from unavailab
   assert.match(production, /className="case-label-frame"/);
   assert.match(production, /Physical printing is not configured/);
   assert.doesNotMatch(production, /startBrowserCaseLabelPrint|window\.print/);
+  const styles = text('../src/app/globals.css');
+  assert.match(styles, /\.case-label-frame\{display:block;width:min\(4in,100%\);height:auto;aspect-ratio:2\/1;min-width:0/);
+  assert.doesNotMatch(styles, /\.case-label-frame\{[^}]*min-width:4in/);
 });
 
 test('the atomic weight-reading RPC prevents reuse and same-key retries remain idempotent', () => {

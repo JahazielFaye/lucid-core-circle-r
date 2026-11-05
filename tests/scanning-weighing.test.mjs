@@ -113,6 +113,8 @@ test('case label preview renders without a printer adapter and never initiates b
   assert.match(preview, /QA Validation Item/);
   assert.match(preview, /QA-CASE-001/);
   assert.match(preview, /GS1 barcode data unavailable/);
+  assert.match(preview, /@media screen\{html,body\{width:100%;height:100%\}body\{display:grid;place-items:center/);
+  assert.match(preview, /\.label\{width:min\(4in,100%\);height:auto;aspect-ratio:2\/1/);
   assert.doesNotMatch(preview, /window\.print|<script/i);
 });
 test('weight bands do not leak between items and may warn or block only when configured', () => {
