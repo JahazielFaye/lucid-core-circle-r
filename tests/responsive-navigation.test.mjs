@@ -4,6 +4,7 @@ import {readFileSync} from 'node:fs';
 
 const page = readFileSync(new URL('../src/app/page.tsx', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../src/app/globals.css', import.meta.url), 'utf8');
+const masterData = readFileSync(new URL('../src/components/master-data-setup.tsx', import.meta.url), 'utf8');
 
 test('resizing an open mobile drawer to desktop clears the drawer state and scroll lock', () => {
   assert.match(page, /const mobileQuery = window\.matchMedia\('\(max-width: 820px\)'\)/);
@@ -48,8 +49,15 @@ test('desktop navigation remains a natural, viewport-height rail rather than str
   assert.match(page, /className="desktop-navigation-list"/);
   assert.match(page, /const sections = group\.sections\.filter\(item => visibleSections\.includes\(item\)\);\s*if \(!sections\.length\) return null;/);
   assert.match(styles, /\.side-nav\{height:calc\(100vh - 72px\);position:sticky;top:72px;align-self:start;justify-content:flex-start;min-height:0;overflow:hidden\}/);
-  assert.match(styles, /\.side-nav \.desktop-navigation-list\{position:static;flex:1;min-height:0;width:100%;overflow-y:auto/);
+  assert.match(styles, /\.side-nav \.desktop-navigation-list\{position:static;flex:1;min-height:0;width:100%;min-width:0;max-width:100%;overflow-y:auto;overflow-x:hidden/);
+  assert.match(styles, /\.desktop-nav-group\{display:grid;gap:4px;width:100%;min-width:0;max-width:100%\}/);
+  assert.match(styles, /\.desktop-nav-group \.nav-item\{min-width:0;max-width:100%\}/);
   assert.match(styles, /\.desktop-nav-group\+\.desktop-nav-group\{margin-top:8px\}/);
   assert.match(styles, /\.workspace\.nav-is-collapsed \.side-nav,\.workspace\.nav-auto \.side-nav\{overflow:hidden\}/);
   assert.match(styles, /\.workspace\.nav-is-collapsed \.side-nav \.desktop-navigation-list,.workspace\.nav-auto \.side-nav \.desktop-navigation-list\{position:static;align-items:center\}/);
+});
+
+test('Office-permitted Customers & Items uses a neutral master-data heading', () => {
+  assert.match(masterData, /<span className="kicker">Master data<\/span>/);
+  assert.doesNotMatch(masterData, /<span className="kicker">Admin \/ Setup<\/span>/);
 });

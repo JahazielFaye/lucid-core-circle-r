@@ -117,7 +117,7 @@ export function MasterDataSetup({ organizationId, role }: { organizationId: stri
   const statusAction = (table: string, id: string, status: 'active'|'inactive') => canEditTab ? <button type="button" className="secondary" disabled={saving} onClick={()=>void updateStatus(table,id,status === 'active' ? 'inactive' : 'active')}>{status === 'active' ? 'Inactivate' : 'Reactivate'}</button> : '—';
 
   return <section className="master-data-workspace">
-    <header className="page-heading compact-heading"><div><span className="kicker">Admin / Setup</span><h1>Customers & items</h1><p>Keep the operational records Lucid uses for orders, production, labels, and traceability accurate.</p></div></header>
+    <header className="page-heading compact-heading"><div><span className="kicker">Master data</span><h1>Customers & items</h1><p>Keep the operational records Lucid uses for orders, production, labels, and traceability accurate.</p></div></header>
     <div className="master-tabs" role="tablist" aria-label="Master data areas">
       {([['customers', 'Customers'], ['shipTos', 'Ship-Tos'], ['contacts', 'Contacts'], ['items', 'Items'], ['identifiers', 'GTIN / UPC'], ['customerItems', 'Customer Items'], ['vendors', 'Vendors'], ['vendorItems', 'Vendor Items'], ['warehouses', 'Warehouses']] as const).map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}
     </div>
