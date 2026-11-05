@@ -5,11 +5,13 @@ import { LucidProductionAuthError, removeLucidCaseFromPallet } from '@/lib/integ
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-export async function POST(_request: Request, context: { params: Promise<{ id: string; caseId: string }> }) {
+export async function POST(request: Request, context: { params: Promise<{ id: string; caseId: string }> }) {
   try {
     const { id, caseId } = await context.params;
+    const body = await request.json() as { reason?: unknown };
+    const reason = typeof body.reason === 'string' ? body.reason : '';
     if (!id || !caseId) return NextResponse.json({ success: false, error: 'A pallet and case are required.' }, { status: 400 });
-    return NextResponse.json({ success: true, ...(await removeLucidCaseFromPallet(id, caseId)) });
+    return NextResponse.json({ success: true, ...(await removeLucidCaseFromPallet(id, caseId, reason)) });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to remove the case from this pallet.';
     return NextResponse.json({ success: false, error: message }, { status: error instanceof LucidProductionAuthError ? 401 : 400 });

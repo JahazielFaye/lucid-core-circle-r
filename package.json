@@ -16,6 +16,7 @@
     "test:authorization-boundaries": "node --test tests/office-authorization-boundaries.test.mjs",
     "test:leadership-authorization-boundaries": "node --test tests/leadership-authorization-boundaries.test.mjs",
     "test:cross-organization-authorization": "node --test tests/cross-organization-authorization.test.mjs",
+    "test:pallet-scanning-workflow": "node --test tests/pallet-scanning-workflow.test.mjs",
     "test:user-organization-admin": "node --import ./tests/register-server-only.mjs --test tests/user-organization-admin.test.mjs tests/invitation-diagnostics.test.mjs",
     "test:user-admin": "npm run test:user-organization-admin",
     "test:security-release-gate": "node --test tests/security-release-gate.test.mjs"

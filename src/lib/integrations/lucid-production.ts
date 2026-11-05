@@ -131,10 +131,21 @@ export async function addLucidCaseToPallet(palletId: string, caseIdentifier: str
   });
 }
 
-export async function removeLucidCaseFromPallet(palletId: string, productionCaseId: string) {
+export async function removeLucidCaseFromPallet(palletId: string, productionCaseId: string, reason: string) {
+  if (!reason.trim()) throw new Error('A correction reason is required to remove a case from a pallet.');
   return callProductionRpc('remove_lucid_case_from_pallet', {
     p_pallet_id: palletId,
     p_production_case_id: productionCaseId,
+    p_reason: reason.trim(),
+  });
+}
+
+export async function moveLucidCaseBetweenPallets(productionCaseId: string, targetPalletId: string, reason: string) {
+  if (!reason.trim()) throw new Error('A correction reason is required to move a case.');
+  return callProductionRpc('move_lucid_case_between_pallets', {
+    p_production_case_id: productionCaseId,
+    p_target_pallet_id: targetPalletId,
+    p_reason: reason.trim(),
   });
 }
 

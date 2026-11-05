@@ -19,6 +19,7 @@ import { InventoryScanPanel } from '@/components/inventory-scan-panel';
 import { HardwareDiagnostics } from '@/components/hardware-diagnostics';
 import { AdminUsersWorkspace } from '@/components/admin-users-workspace';
 import { ScanCapture } from '@/components/scan-capture';
+import { LucidInternalBarcode } from '@/components/lucid-internal-barcode';
 import { resolveProductionOrderLine } from '@/lib/scanning/production-order';
 import { manualWeightReading, validateWeight, ZM303_STATION } from '@/lib/scanning/weight';
 import { prepareCasePrintRequest } from '@/lib/scanning/print-request';
@@ -52,7 +53,7 @@ type ProductionLine = UnifiedOrder['lines'][number] & { id: string; nativeItemId
 type OperationalOrder = Omit<UnifiedOrder, 'lines'> & { operationalStatus: string; orderDate?: string; sourceSystem?: string; lines: ProductionLine[] };
 type ProductionLot = { id:string; organization_id:string; order_id:string; order_line_id:string; lot_code:string; status:'active'|'closed'; created_at:string };
 type ProductionCase = { id:string; order_id:string; order_line_id:string; production_lot_id:string|null; production_run_id:string|null; output_inventory_lot_id:string|null; lot_code:string|null; pallet_id:string|null; case_identifier:string; quantity:number; net_weight:number|null; net_weight_uom:string; uom:string; status:'produced'|'palletized'|'shipped'|'voided'; produced_at:string; voided_at:string|null; void_reason:string|null; label_printed_at:string|null; label_print_count:number };
-type OperationalPallet = { id:string; order_id:string; pallet_identifier:string; status:'building'|'complete'|'shipped'|'voided'; created_at:string; created_by:string|null; created_by_name:string|null; completed_at:string|null; completed_by:string|null; completed_by_name:string|null; original_completed_at:string|null; original_completed_by:string|null; original_completed_by_name:string|null; reopened_at:string|null; reopened_by:string|null; reopened_by_name:string|null; reopen_reason:string|null };
+type OperationalPallet = { id:string; order_id:string; pallet_identifier:string; pallet_sequence?:number; status:'building'|'complete'|'shipped'|'voided'; created_at:string; created_by:string|null; created_by_name:string|null; completed_at:string|null; completed_by:string|null; completed_by_name:string|null; original_completed_at:string|null; original_completed_by:string|null; original_completed_by_name:string|null; reopened_at:string|null; reopened_by:string|null; reopened_by_name:string|null; reopen_reason:string|null };
 type PalletCaseAssignment = { id:string; pallet_id:string; production_case_id:string|null; status:'active'|'removed' };
 type PalletActivity = { id:string; pallet_id:string; action:string; actor_name:string|null; created_at:string; details:unknown };
 
@@ -62,6 +63,7 @@ function palletActivityCopy(action: string, details: unknown) {
   if (action === 'pallet created') return 'created this pallet.';
   if (action === 'case added to pallet') return `added case ${caseIdentifier}.`;
   if (action === 'case removed from pallet') return `removed case ${caseIdentifier} for correction.`;
+  if (action === 'case moved between pallets') return `moved case ${caseIdentifier} for correction.`;
   if (action === 'pallet completed') return 'completed this pallet.';
   if (action === 'pallet reopened for correction') return 'reopened this pallet for correction.';
   return 'updated this pallet.';
@@ -686,7 +688,7 @@ export default function Home() {
       supabase.from('sps_order_exceptions').select('id, staged_order_id, staged_order_line_id, exception_code, severity, field_name, message, suggested_actions, status, details, resolution_action, resolved_at, resolved_by').eq('organization_id', profile.organization_id),
       supabase.from('profiles').select('id, display_name').eq('organization_id', profile.organization_id),
       supabase.from('orders').select('id, external_po, customer, ship_to, customer_id, ship_to_id, source, source_system, requested_ship_date, requested_delivery_date, ordered_weight_lb, status, food_connex_order, created_at, customers(name), customer_ship_tos(name, location_code)').eq('organization_id', profile.organization_id).in('status', ['ready_for_production', 'in_production', 'production_complete']).order('promoted_at', { ascending: false }),
-      supabase.from('pallets').select('id, order_id, pallet_identifier, status, created_at, created_by, completed_at, completed_by, original_completed_at, original_completed_by, reopened_at, reopened_by, reopen_reason').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }),
+      supabase.from('pallets').select('id, order_id, pallet_identifier, pallet_sequence, status, created_at, created_by, completed_at, completed_by, original_completed_at, original_completed_by, reopened_at, reopened_by, reopen_reason').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }),
       supabase.from('audit_events').select('id, actor_id, action, entity_id, details, created_at').eq('organization_id', profile.organization_id).eq('entity_type', 'pallet').order('created_at', { ascending: false }).limit(200),
     ]);
     if (!ordersResult.error) {
@@ -1464,7 +1466,7 @@ export default function Home() {
           </>}
 
           {section === 'Pallets' && <>
-            {profile ? <PalletBreakdownHub orders={operationalOrders} pallets={operationalPallets} cases={productionCases} assignments={palletCaseAssignments} activities={palletActivities} role={role} selectedPallet={selectedOperationalPallet} onOpenPallet={id => setSelectedPalletId(id)} onClosePallet={() => setSelectedPalletId('')} onRefresh={refreshStaging} /> : <Empty title="Sign in to build pallets" text="Production pallet breakdowns are available to authenticated Lucid Core users." />}
+            {profile ? <PalletBreakdownHub organizationId={profile.organization_id} orders={operationalOrders} pallets={operationalPallets} cases={productionCases} assignments={palletCaseAssignments} activities={palletActivities} role={role} selectedPallet={selectedOperationalPallet} onOpenPallet={id => setSelectedPalletId(id)} onClosePallet={() => setSelectedPalletId('')} onRefresh={refreshStaging} /> : <Empty title="Sign in to build pallets" text="Production pallet breakdowns are available to authenticated Lucid Core users." />}
           </>}
 
           {section === 'Shipments' && (profile
@@ -1780,6 +1782,7 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [caseIdentifier, setCaseIdentifier] = useState('');
   const [netWeight, setNetWeight] = useState('');
   const [weightOperationKey, setWeightOperationKey] = useState('');
@@ -1997,7 +2000,8 @@ function ProductionOrderWorkspace({ order, cases, lots, organizationId, role, on
   </section>;
 }
 
-function PalletBreakdownHub({ orders, pallets, cases, assignments, activities, role, selectedPallet, onOpenPallet, onClosePallet, onRefresh }: {
+function PalletBreakdownHub({ organizationId, orders, pallets, cases, assignments, activities, role, selectedPallet, onOpenPallet, onClosePallet, onRefresh }: {
+  organizationId: string;
   orders: OperationalOrder[];
   pallets: OperationalPallet[];
   cases: ProductionCase[];
@@ -2011,6 +2015,7 @@ function PalletBreakdownHub({ orders, pallets, cases, assignments, activities, r
 }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const request = async (path: string, body?: object) => {
     const response = await fetch(path, { method: 'POST', credentials: 'same-origin', headers: body ? { 'Content-Type': 'application/json' } : undefined, body: body ? JSON.stringify(body) : undefined });
     const result = await response.json().catch(() => null) as ({ success?: boolean; error?: string } & Record<string, unknown>) | null;
@@ -2019,7 +2024,7 @@ function PalletBreakdownHub({ orders, pallets, cases, assignments, activities, r
   };
   const save = async <T,>(action: () => Promise<T>) => {
     if (saving) return undefined;
-    setSaving(true); setError(null);
+    setSaving(true); setError(null); setNotice(null);
     try { const result = await action(); await onRefresh(); return result; }
     catch (caught) { setError(caught instanceof Error ? caught.message : 'The pallet update could not be saved.'); return undefined; }
     finally { setSaving(false); }
@@ -2033,6 +2038,13 @@ function PalletBreakdownHub({ orders, pallets, cases, assignments, activities, r
     if (reason == null) return;
     if (!reason.trim()) { setError('A correction reason is required to reopen this pallet.'); return; }
     await save(() => request(`/api/production/pallets/${palletId}/reopen`, { reason }));
+  };
+  const correctionAction = async (kind: 'remove' | 'move', palletId: string, caseId: string, targetPalletId?: string) => {
+    const reason = window.prompt(kind === 'move' ? 'Why is this case moving to another pallet?' : 'Why is this case being removed from this pallet?');
+    if (reason == null) return;
+    if (!reason.trim()) { setError('A correction reason is required.'); return; }
+    const result = await save(() => request(kind === 'move' ? `/api/production/pallets/${palletId}/cases/${caseId}/move` : `/api/production/pallets/${palletId}/cases/${caseId}/remove`, kind === 'move' ? { targetPalletId, reason } : { reason }));
+    if (result) setNotice(kind === 'move' ? 'Case moved to the selected pallet.' : 'Case removed and returned to available cases.');
   };
 
   if (selectedPallet) {
@@ -2053,16 +2065,20 @@ function PalletBreakdownHub({ orders, pallets, cases, assignments, activities, r
       casesByLine.set(productionCase.order_line_id, grouped);
     }
 
+    const palletName = `Pallet ${selectedPallet.pallet_sequence || selectedPallet.pallet_identifier.split('-').at(-1)?.replace(/^0+/, '') || '—'}`;
+    const canCorrect = ['office', 'leadership', 'lucid_admin'].includes(role);
     return <section className="pallet-workspace">
       <button type="button" className="text-button" onClick={onClosePallet}>← Back to pallet breakdowns</button>
-      <header className="surface pallet-workspace-header"><div><span className="kicker">Digital pallet breakdown</span><h1>{selectedPallet.pallet_identifier}</h1><p>{order ? `${order.customer} · PO ${order.externalPo} · ${order.shipTo}` : 'Order details unavailable'}</p></div><span className={`status-chip ${selectedPallet.status === 'complete' ? 'ready' : 'progress'}`}>{selectedPallet.status === 'complete' ? 'Completed' : reopenedForCorrection ? 'Reopened for correction' : 'Building'}</span></header>
+      <header className="surface pallet-workspace-header"><div><span className="kicker">Digital pallet breakdown</span><h1>{palletName}</h1><p>{selectedPallet.pallet_identifier} · {order ? `${order.customer} · PO ${order.externalPo} · ${order.shipTo}` : 'Order details unavailable'}</p></div><span className={`status-chip ${selectedPallet.status === 'complete' ? 'ready' : 'progress'}`}>{selectedPallet.status === 'complete' ? 'Completed' : reopenedForCorrection ? 'Reopened for correction' : 'Building'}</span></header>
       {error && <p className="production-workspace-error" role="alert">{error}</p>}
+      {notice && <p className="master-data-message" role="status">✓ {notice}</p>}
       <section className="surface pallet-total-strip"><div><small>Total cases</small><strong>{totalCases}</strong></div><div><small>Total net weight</small><strong>{totalWeight.toFixed(2)} lb</strong></div><div><small>Items</small><strong>{casesByLine.size}</strong></div><div><small>Created by</small><strong>{selectedPallet.created_by_name || 'Team member'}</strong></div><div><small>Last updated</small><strong>{lastActivity?.actor_name || '—'}</strong></div>{selectedPallet.status === 'building' ? <button type="button" className="primary production-action" disabled={saving} onClick={() => void save(() => request(`/api/production/pallets/${selectedPallet.id}/complete`))}>{saving ? 'Completing…' : 'Complete Pallet'}</button> : <div className="pallet-complete-note"><strong>Completed</strong><small>{selectedPallet.completed_by_name ? `Completed by ${selectedPallet.completed_by_name}` : 'Completed'}{selectedPallet.completed_at ? ` · ${new Date(selectedPallet.completed_at).toLocaleString()}` : ''}</small>{canReopen ? <button type="button" className="secondary" disabled={saving} onClick={() => void reopenPallet(selectedPallet.id)}>Reopen Pallet</button> : <small>Ask office or leadership to reopen for correction.</small>}</div>}</section>
-      {selectedPallet.status === 'building' && <PalletCaseAdder cases={availableCases} saving={saving} onAdd={caseIdentifier => void save(() => request(`/api/production/pallets/${selectedPallet.id}/cases`, { caseIdentifier }))} />}
+      <section className="surface pallet-label-preview" aria-label="Lucid internal pallet label preview"><div><span className="kicker">Pallet label preview</span><h2>{palletName}</h2><p>Lucid reference: <strong>{selectedPallet.pallet_identifier}</strong></p><p>PO {order?.externalPo || 'Not specified'} · {order?.customer || 'Customer not specified'}</p><p>{totalCases} cases · {totalWeight.toFixed(2)} LB · {casesByLine.size} item{casesByLine.size === 1 ? '' : 's'}</p></div><LucidInternalBarcode value={selectedPallet.pallet_identifier}/><small>Internal Lucid Code 39 reference only. SSCC and GS1 are not configured. Physical printing is not configured.</small></section>
+      {selectedPallet.status === 'building' && <PalletCaseAdder cases={availableCases} saving={saving} organizationId={organizationId} onAdd={caseIdentifier => void (async () => { const result = await save(() => request(`/api/production/pallets/${selectedPallet.id}/cases`, { caseIdentifier })); if (result) setNotice(`Case added to ${palletName}.`); })()} />}
       <section className="pallet-item-groups">{Array.from(casesByLine.entries()).map(([lineId, lineCases]) => {
         const line = order?.lines.find(candidate => candidate.id === lineId);
         const lineWeight = lineCases.reduce((total, productionCase) => total + (productionCase.net_weight || 0), 0);
-        return <article className="surface pallet-item-group" key={lineId}><div className="pallet-item-head"><div><span className="kicker">Item</span><h2>{line ? productionItemName(line) : 'Item details unavailable'}</h2><p>{line ? productionItemIdentifier(line) : 'No item identifier'}</p></div><div><strong>{lineCases.reduce((total, productionCase) => total + productionCase.quantity, 0)} cases</strong><small>{lineWeight.toFixed(2)} lb total</small></div></div><details><summary>Show {lineCases.length} case{lineCases.length === 1 ? '' : 's'}</summary><div className="pallet-case-list">{lineCases.map(productionCase => <div key={productionCase.id}><span><strong>{productionCase.case_identifier}</strong><small>{productionCase.produced_at ? new Date(productionCase.produced_at).toLocaleString() : 'Production time unavailable'}{productionCase.lot_code ? ` · Prod Code ${productionCase.lot_code}` : ''}</small></span><strong>{productionCase.net_weight == null ? 'Weight unavailable' : `${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}`}</strong>{selectedPallet.status === 'building' && <button type="button" className="text-button danger-link" disabled={saving} onClick={() => void save(() => request(`/api/production/pallets/${selectedPallet.id}/cases/${productionCase.id}/remove`))}>Remove from pallet</button>}</div>)}</div></details></article>;
+        return <article className="surface pallet-item-group" key={lineId}><div className="pallet-item-head"><div><span className="kicker">Item</span><h2>{line ? productionItemName(line) : 'Item details unavailable'}</h2><p>{line ? productionItemIdentifier(line) : 'No item identifier'}</p></div><div><strong>{lineCases.reduce((total, productionCase) => total + productionCase.quantity, 0)} cases</strong><small>{lineWeight.toFixed(2)} lb total</small></div></div><details><summary>Show {lineCases.length} case{lineCases.length === 1 ? '' : 's'}</summary><div className="pallet-case-list">{lineCases.map(productionCase => <div key={productionCase.id}><span><strong>{productionCase.case_identifier}</strong><small>{productionCase.produced_at ? new Date(productionCase.produced_at).toLocaleString() : 'Production time unavailable'}{productionCase.lot_code ? ` · Prod Code ${productionCase.lot_code}` : ''}</small></span><strong>{productionCase.net_weight == null ? 'Weight unavailable' : `${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}`}</strong>{selectedPallet.status === 'building' && canCorrect && <><button type="button" className="text-button danger-link" disabled={saving} onClick={() => void correctionAction('remove', selectedPallet.id, productionCase.id)}>Remove</button>{pallets.filter(p => p.order_id === selectedPallet.order_id && p.id !== selectedPallet.id && p.status === 'building').map(target => <button key={target.id} type="button" className="text-button" disabled={saving} onClick={() => void correctionAction('move', selectedPallet.id, productionCase.id, target.id)}>Move to Pallet {target.pallet_sequence || target.pallet_identifier.split('-').at(-1)?.replace(/^0+/, '')}</button>)}</>}</div>)}</div></details></article>;
       })}</section>
       <section className="surface pallet-activity"><div><span className="kicker">Activity</span><h2>What happened on this pallet</h2></div><div>{palletActivity.length ? palletActivity.map(activity => <p key={activity.id}><strong>{activity.actor_name || 'A team member'}</strong> {palletActivityCopy(activity.action, activity.details)}<small>{new Date(activity.created_at).toLocaleString()}</small></p>) : <p className="pallet-activity-empty">Activity will appear as the team works on this pallet.</p>}</div></section>
       {!assignedCases.length && <Empty title="No cases on this pallet yet" text="Scan or select an available case to begin the pallet breakdown." />}
@@ -2073,10 +2089,10 @@ function PalletBreakdownHub({ orders, pallets, cases, assignments, activities, r
   return <section className="pallet-workspace"><header className="page-heading"><div><span className="kicker">Pallet Breakdown</span><h1>Build each pallet from finished cases.</h1><p>Scan or select existing cases, then complete the digital breakdown when the pallet is ready.</p></div></header>{error && <p className="production-workspace-error" role="alert">{error}</p>}<section className="pallet-order-list">{buildableOrders.map(order => { const orderPallets = pallets.filter(pallet => pallet.order_id === order.id); const palletized = cases.filter(productionCase => productionCase.order_id === order.id && productionCase.status === 'palletized').reduce((total, productionCase) => total + productionCase.quantity, 0); return <article className="surface pallet-order-card" key={order.id}><div><span className="kicker">PO {order.externalPo}</span><h2>{order.customer}</h2><p>{order.shipTo} · {palletized} cases already palletized</p></div><div className="pallet-order-actions"><button type="button" className="primary" disabled={saving} onClick={() => void createPallet(order.id)}>{saving ? 'Creating…' : 'Create Pallet'}</button>{orderPallets.map(pallet => <button type="button" className="secondary" key={pallet.id} onClick={() => onOpenPallet(pallet.id)}>{pallet.pallet_identifier} · {pallet.status === 'complete' ? 'Complete' : 'Building'}</button>)}</div></article>; })}</section>{!buildableOrders.length && <Empty title="No orders are ready for pallet building" text="Start production and record cases first." />}</section>;
 }
 
-function PalletCaseAdder({ cases, saving, onAdd }: { cases: ProductionCase[]; saving: boolean; onAdd: (caseIdentifier: string) => void }) {
+function PalletCaseAdder({ cases, saving, organizationId, onAdd }: { cases: ProductionCase[]; saving: boolean; organizationId: string; onAdd: (caseIdentifier: string) => void }) {
   const [caseIdentifier, setCaseIdentifier] = useState('');
   const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (caseIdentifier.trim()) { onAdd(caseIdentifier); setCaseIdentifier(''); } };
-  return <section className="surface pallet-case-adder"><div><span className="kicker">Add existing case</span><h2>Scan or enter Case ID</h2><p>Only available cases from this order can be added.</p></div><form onSubmit={submit}><label><span>Case ID</span><input autoFocus value={caseIdentifier} onChange={event => setCaseIdentifier(event.target.value)} placeholder="Scan or enter case ID" /></label><button className="primary" disabled={saving} type="submit">Add Case</button></form><label className="pallet-case-select"><span>Or select an available case</span><select value="" disabled={saving} onChange={event => { if (event.target.value) onAdd(event.target.value); }}><option value="">Choose a case</option>{cases.map(productionCase => <option key={productionCase.id} value={productionCase.case_identifier}>{productionCase.case_identifier} · {productionCase.net_weight?.toFixed(2) || '—'} {productionCase.net_weight_uom}</option>)}</select></label></section>;
+  return <section className="surface pallet-case-adder"><div><span className="kicker">Add existing case</span><h2>Scan or enter Case ID</h2><p>Scan with a keyboard wedge or camera, enter manually, or choose an available case.</p></div><ScanCapture organizationId={organizationId} label="Scan case identifier" onRawCapture={raw => { if (!raw) return false; onAdd(raw); return true; }} /><form onSubmit={submit}><label><span>Case ID</span><input autoFocus value={caseIdentifier} onChange={event => setCaseIdentifier(event.target.value)} placeholder="Scan or enter case ID" /></label><button className="primary" disabled={saving} type="submit">Add Case</button></form><label className="pallet-case-select"><span>Or select an available case</span><select value="" disabled={saving} onChange={event => { if (event.target.value) onAdd(event.target.value); }}><option value="">Choose a case</option>{cases.map(productionCase => <option key={productionCase.id} value={productionCase.case_identifier}>{productionCase.case_identifier} · {productionCase.net_weight?.toFixed(2) || '—'} {productionCase.net_weight_uom}</option>)}</select></label></section>;
 }
 
 function StagedOrderReviewWorkspace({ order, lines, allLines, exceptions, role, onOpenProduction, onPromotionFailure, onSaved }: {

@@ -7,12 +7,12 @@ import { resolveIdentifier, type ResolvableIdentifier } from '@/lib/scanning/res
 import type { NormalizedScanResult, ScanSource } from '@/lib/scanning/types';
 import { isDuplicateScan, shouldQueueNoSuffixScan } from '@/lib/scanning/capture-guard';
 
-type Props = { organizationId: string; onResolved: (result: NormalizedScanResult) => void; label?: string; allowCamera?: boolean; className?: string };
+type Props = { organizationId: string; onResolved?: (result: NormalizedScanResult) => void; onRawCapture?: (rawValue: string, source: ScanSource) => boolean; label?: string; allowCamera?: boolean; className?: string };
 type BarcodeDetectorInstance = { detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue: string; format?: string }>> };
 type BarcodeDetectorConstructor = new (options?: unknown) => BarcodeDetectorInstance;
 
 /** A single capture surface for keyboard-wedge scanners, camera reads, and manual entry. */
-export function ScanCapture({ organizationId, onResolved, label = 'Scan or enter barcode', allowCamera = true, className = '' }: Props) {
+export function ScanCapture({ organizationId, onResolved, onRawCapture, label = 'Scan or enter barcode', allowCamera = true, className = '' }: Props) {
   const supabase = useMemo(() => createClient(), []); const input = useRef<HTMLInputElement>(null); const video = useRef<HTMLVideoElement>(null); const stream = useRef<MediaStream | null>(null); const timer = useRef<number | null>(null); const detector = useRef<{ stop: () => void } | null>(null); const lastKeyAt = useRef(0); const rapidCharacters = useRef(0); const recentScan = useRef<{ value:string; at:number } | null>(null);
   const [value, setValue] = useState(''); const [identifiers, setIdentifiers] = useState<ResolvableIdentifier[]>([]); const [message, setMessage] = useState(''); const [cameraOpen, setCameraOpen] = useState(false); const [torchSupported, setTorchSupported] = useState(false); const [torchEnabled, setTorchEnabled] = useState(false);
   useEffect(() => { let current = true; void (async () => {
@@ -35,7 +35,7 @@ export function ScanCapture({ organizationId, onResolved, label = 'Scan or enter
     setIdentifiers([...configured, ...nativeCodes]);
   })(); return () => { current = false; }; }, [organizationId, supabase]);
   const cancelQueuedCompletion = () => { if (timer.current) { window.clearTimeout(timer.current); timer.current = null; } };
-  const complete = (raw: string, source: ScanSource) => { cancelQueuedCompletion(); const now = Date.now(); if (isDuplicateScan(recentScan.current, raw, now)) return resolveIdentifier(raw, source, identifiers); recentScan.current = { value: raw, at: now }; const result = resolveIdentifier(raw, source, identifiers); setMessage(result.blockingErrors[0] || result.warnings[0] || (result.validationStatus === 'accepted' ? '✓ Item accepted' : '')); onResolved(result); return result; };
+  const complete = (raw: string, source: ScanSource) => { cancelQueuedCompletion(); const now = Date.now(); if (isDuplicateScan(recentScan.current, raw, now)) return resolveIdentifier(raw, source, identifiers); recentScan.current = { value: raw, at: now }; if (onRawCapture?.(raw.trim(), source)) { setValue(''); setMessage('✓ Scan captured'); return { validationStatus: 'accepted' } as NormalizedScanResult; } const result = resolveIdentifier(raw, source, identifiers); setMessage(result.blockingErrors[0] || result.warnings[0] || (result.validationStatus === 'accepted' ? '✓ Item accepted' : '')); onResolved?.(result); return result; };
   const queueCompletion = (nextValue: string) => { if (!shouldQueueNoSuffixScan(rapidCharacters.current)) return; if (timer.current) window.clearTimeout(timer.current); timer.current = window.setTimeout(() => { if (nextValue.trim()) complete(nextValue, 'physical_scanner'); }, 180); };
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => { if (event.key === 'Enter' || event.key === 'Tab') { event.preventDefault(); if (timer.current) window.clearTimeout(timer.current); complete(value, 'physical_scanner'); return; } if (event.key.length === 1) { const now = performance.now(); rapidCharacters.current = now - lastKeyAt.current < 90 ? rapidCharacters.current + 1 : 1; lastKeyAt.current = now; } };
   const closeCamera = () => { detector.current?.stop(); detector.current = null; stream.current?.getTracks().forEach(track => track.stop()); stream.current = null; setTorchSupported(false); setTorchEnabled(false); setCameraOpen(false); window.setTimeout(() => input.current?.focus(), 0); };
