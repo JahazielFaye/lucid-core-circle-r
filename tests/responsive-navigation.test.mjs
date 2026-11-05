@@ -10,7 +10,7 @@ test('resizing an open mobile drawer to desktop clears the drawer state and scro
   assert.match(page, /const mobileQuery = window\.matchMedia\('\(max-width: 820px\)'\)/);
   assert.match(page, /if \(mobileQuery\.matches\) return;/);
   assert.match(page, /setMobileNavOpen\(false\);/);
-  assert.match(page, /mobileQuery\.addEventListener\('change', closeDrawerOutsideMobile\)/);
+  assert.match(page, /const unsubscribe = subscribeMediaQuery\(mobileQuery, closeDrawerOutsideMobile\)/);
   assert.match(page, /body\.style\.position = 'fixed';/);
   assert.match(page, /root\.style\.overflow = 'hidden';/);
   assert.match(page, /window\.scrollTo\(0, scrollY\);/);
@@ -37,6 +37,14 @@ test('fresh profiles auto-collapse only at the intended laptop breakpoint while 
   assert.match(page, /\(min-width: 821px\) and \(max-width: 1180px\)/);
   assert.match(page, /lucid-core-desktop-navigation-mode/);
   assert.match(styles, /@media \(min-width:821px\) and \(max-width:1180px\)\{\.workspace\.nav-auto\{grid-template-columns:76px minmax\(0,1fr\)\}/);
+});
+
+test('mobile startup degrades safely when browser storage or modern media-query listeners are unavailable', () => {
+  assert.match(page, /function safeBrowserStorageGet/);
+  assert.match(page, /try \{ return window\.localStorage\?\.getItem/);
+  assert.match(page, /function subscribeMediaQuery/);
+  assert.match(page, /query\.addListener\(listener\)/);
+  assert.match(page, /query\.removeListener\(listener\)/);
 });
 
 test('only Inventory data regions scroll horizontally on narrow viewports', () => {

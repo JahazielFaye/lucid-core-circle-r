@@ -6,7 +6,13 @@ const code39: Record<string, string> = {
 /** A true Code 39 rendering of a Lucid-internal reference; it is not GS1 or SSCC. */
 export function LucidInternalBarcode({ value }: { value: string }) {
   const encoded = `*${value.toUpperCase()}*`;
-  const widths = Array.from(encoded).flatMap(character => [...(code39[character] || code39['-'])].map(mark => mark === 'w' ? 3 : 1).concat([1]));
+  // Avoid Array.prototype.flatMap so the preview also works in older mobile
+  // WebViews used on the production floor.
+  const widths: number[] = [];
+  for (const character of encoded) {
+    for (const mark of code39[character] || code39['-']) widths.push(mark === 'w' ? 3 : 1);
+    widths.push(1);
+  }
   const total = widths.reduce((sum, width) => sum + width, 0);
   let cursor = 0;
   return <svg className="pallet-internal-barcode" viewBox={`0 0 ${total} 54`} role="img" aria-label={`Lucid internal Code 39 barcode for ${value}`} preserveAspectRatio="none">{widths.map((width, index) => { const x = cursor; cursor += width; return index % 2 === 0 ? <rect key={index} x={x} y="0" width={width} height="42" fill="currentColor" /> : null; })}<text x={total / 2} y="52" textAnchor="middle" fontSize="7" fill="currentColor">{value}</text></svg>;

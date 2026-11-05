@@ -31,6 +31,21 @@ type Section = 'Home' | 'Orders' | 'Exceptions' | 'Production' | 'Inventory' | '
 type Notice = { tone: 'success' | 'warning' | 'info'; message: string } | null;
 type DesktopNavigationMode = 'auto' | 'expanded' | 'collapsed';
 
+function safeBrowserStorageGet(key: string) {
+  try { return window.localStorage?.getItem(key) || null; } catch { return null; }
+}
+function safeBrowserStorageSet(key: string, value: string) {
+  try { window.localStorage?.setItem(key, value); } catch { /* Navigation remains usable without browser storage. */ }
+}
+function subscribeMediaQuery(query: MediaQueryList, listener: () => void) {
+  if (typeof query.addEventListener === 'function') {
+    query.addEventListener('change', listener);
+    return () => query.removeEventListener('change', listener);
+  }
+  query.addListener(listener);
+  return () => query.removeListener(listener);
+}
+
 type UserRecord = {
   id: string;
   name: string;
@@ -497,11 +512,11 @@ export default function Home() {
     const mediumQuery = window.matchMedia('(min-width: 821px) and (max-width: 1180px)');
     const syncViewport = () => setMediumDesktop(mediumQuery.matches);
     syncViewport();
-    mediumQuery.addEventListener('change', syncViewport);
-    const savedMode = window.localStorage.getItem('lucid-core-desktop-navigation-mode');
+    const unsubscribe = subscribeMediaQuery(mediumQuery, syncViewport);
+    const savedMode = safeBrowserStorageGet('lucid-core-desktop-navigation-mode');
     if (savedMode === 'expanded' || savedMode === 'collapsed') setDesktopNavigationMode(savedMode);
-    setNavigationHintVisible(window.localStorage.getItem('lucid-core-navigation-hint-dismissed') !== 'true');
-    return () => mediumQuery.removeEventListener('change', syncViewport);
+    setNavigationHintVisible(safeBrowserStorageGet('lucid-core-navigation-hint-dismissed') !== 'true');
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -513,9 +528,9 @@ export default function Home() {
       // removes every mobile-only lock style.
       setMobileNavOpen(false);
     };
-    mobileQuery.addEventListener('change', closeDrawerOutsideMobile);
+    const unsubscribe = subscribeMediaQuery(mobileQuery, closeDrawerOutsideMobile);
     closeDrawerOutsideMobile();
-    return () => mobileQuery.removeEventListener('change', closeDrawerOutsideMobile);
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
@@ -976,11 +991,11 @@ export default function Home() {
   function toggleDesktopNavigation() {
     const nextMode: DesktopNavigationMode = desktopNavigationCollapsed ? 'expanded' : 'collapsed';
     setDesktopNavigationMode(nextMode);
-    window.localStorage.setItem('lucid-core-desktop-navigation-mode', nextMode);
+    safeBrowserStorageSet('lucid-core-desktop-navigation-mode', nextMode);
   }
   function dismissNavigationHint() {
     setNavigationHintVisible(false);
-    window.localStorage.setItem('lucid-core-navigation-hint-dismissed', 'true');
+    safeBrowserStorageSet('lucid-core-navigation-hint-dismissed', 'true');
   }
 
   function audit(action: string, entity: string, detail: string) {
@@ -2065,7 +2080,9 @@ function PalletBreakdownHub({ organizationId, orders, pallets, cases, assignment
       casesByLine.set(productionCase.order_line_id, grouped);
     }
 
-    const palletName = `Pallet ${selectedPallet.pallet_sequence || selectedPallet.pallet_identifier.split('-').at(-1)?.replace(/^0+/, '') || '—'}`;
+    const palletReferenceParts = selectedPallet.pallet_identifier.split('-');
+    const palletNumberFromReference = palletReferenceParts[palletReferenceParts.length - 1]?.replace(/^0+/, '');
+    const palletName = `Pallet ${selectedPallet.pallet_sequence || palletNumberFromReference || '—'}`;
     const canCorrect = ['office', 'leadership', 'lucid_admin'].includes(role);
     return <section className="pallet-workspace">
       <button type="button" className="text-button" onClick={onClosePallet}>← Back to pallet breakdowns</button>
@@ -2078,7 +2095,7 @@ function PalletBreakdownHub({ organizationId, orders, pallets, cases, assignment
       <section className="pallet-item-groups">{Array.from(casesByLine.entries()).map(([lineId, lineCases]) => {
         const line = order?.lines.find(candidate => candidate.id === lineId);
         const lineWeight = lineCases.reduce((total, productionCase) => total + (productionCase.net_weight || 0), 0);
-        return <article className="surface pallet-item-group" key={lineId}><div className="pallet-item-head"><div><span className="kicker">Item</span><h2>{line ? productionItemName(line) : 'Item details unavailable'}</h2><p>{line ? productionItemIdentifier(line) : 'No item identifier'}</p></div><div><strong>{lineCases.reduce((total, productionCase) => total + productionCase.quantity, 0)} cases</strong><small>{lineWeight.toFixed(2)} lb total</small></div></div><details><summary>Show {lineCases.length} case{lineCases.length === 1 ? '' : 's'}</summary><div className="pallet-case-list">{lineCases.map(productionCase => <div key={productionCase.id}><span><strong>{productionCase.case_identifier}</strong><small>{productionCase.produced_at ? new Date(productionCase.produced_at).toLocaleString() : 'Production time unavailable'}{productionCase.lot_code ? ` · Prod Code ${productionCase.lot_code}` : ''}</small></span><strong>{productionCase.net_weight == null ? 'Weight unavailable' : `${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}`}</strong>{selectedPallet.status === 'building' && canCorrect && <><button type="button" className="text-button danger-link" disabled={saving} onClick={() => void correctionAction('remove', selectedPallet.id, productionCase.id)}>Remove</button>{pallets.filter(p => p.order_id === selectedPallet.order_id && p.id !== selectedPallet.id && p.status === 'building').map(target => <button key={target.id} type="button" className="text-button" disabled={saving} onClick={() => void correctionAction('move', selectedPallet.id, productionCase.id, target.id)}>Move to Pallet {target.pallet_sequence || target.pallet_identifier.split('-').at(-1)?.replace(/^0+/, '')}</button>)}</>}</div>)}</div></details></article>;
+        return <article className="surface pallet-item-group" key={lineId}><div className="pallet-item-head"><div><span className="kicker">Item</span><h2>{line ? productionItemName(line) : 'Item details unavailable'}</h2><p>{line ? productionItemIdentifier(line) : 'No item identifier'}</p></div><div><strong>{lineCases.reduce((total, productionCase) => total + productionCase.quantity, 0)} cases</strong><small>{lineWeight.toFixed(2)} lb total</small></div></div><details><summary>Show {lineCases.length} case{lineCases.length === 1 ? '' : 's'}</summary><div className="pallet-case-list">{lineCases.map(productionCase => <div key={productionCase.id}><span><strong>{productionCase.case_identifier}</strong><small>{productionCase.produced_at ? new Date(productionCase.produced_at).toLocaleString() : 'Production time unavailable'}{productionCase.lot_code ? ` · Prod Code ${productionCase.lot_code}` : ''}</small></span><strong>{productionCase.net_weight == null ? 'Weight unavailable' : `${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}`}</strong>{selectedPallet.status === 'building' && canCorrect && <><button type="button" className="text-button danger-link" disabled={saving} onClick={() => void correctionAction('remove', selectedPallet.id, productionCase.id)}>Remove</button>{pallets.filter(p => p.order_id === selectedPallet.order_id && p.id !== selectedPallet.id && p.status === 'building').map(target => { const parts = target.pallet_identifier.split('-'); const number = target.pallet_sequence || parts[parts.length - 1]?.replace(/^0+/, '') || '—'; return <button key={target.id} type="button" className="text-button" disabled={saving} onClick={() => void correctionAction('move', selectedPallet.id, productionCase.id, target.id)}>Move to Pallet {number}</button>; })}</>}</div>)}</div></details></article>;
       })}</section>
       <section className="surface pallet-activity"><div><span className="kicker">Activity</span><h2>What happened on this pallet</h2></div><div>{palletActivity.length ? palletActivity.map(activity => <p key={activity.id}><strong>{activity.actor_name || 'A team member'}</strong> {palletActivityCopy(activity.action, activity.details)}<small>{new Date(activity.created_at).toLocaleString()}</small></p>) : <p className="pallet-activity-empty">Activity will appear as the team works on this pallet.</p>}</div></section>
       {!assignedCases.length && <Empty title="No cases on this pallet yet" text="Scan or select an available case to begin the pallet breakdown." />}

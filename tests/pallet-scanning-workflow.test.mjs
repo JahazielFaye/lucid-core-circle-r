@@ -49,6 +49,13 @@ test('raw scanner capture supports keyboard/camera/manual without weakening item
   assert.match(scanCapture, /onResolved\?\.\(result\)/);
 });
 
+test('pallet preview avoids newer collection/string helpers that can crash older mobile WebViews', () => {
+  const barcode = text('../src/components/lucid-internal-barcode.tsx');
+  assert.doesNotMatch(barcode, /\.flatMap\(/);
+  assert.match(barcode, /for \(const character of encoded\)/);
+  assert.doesNotMatch(page, /\.at\(-1\)/);
+});
+
 test('every pallet RPC signature explicitly revokes default public and anonymous execution', () => {
   for (const signature of [
     'create_lucid_pallet\\(uuid\\)',
