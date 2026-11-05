@@ -195,14 +195,14 @@ html,body{max-width:100%;overflow-x:clip}
    and only the list scrolls when a role has more destinations than fit. */
 @media(min-width:821px){
   .side-nav{height:calc(100vh - 72px);position:sticky;top:72px;align-self:start;justify-content:flex-start;min-height:0;overflow:hidden}
-  .side-nav .desktop-navigation-list{position:static;flex:1;min-height:0;width:100%;min-width:0;max-width:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:2px}
-  .desktop-nav-group{display:grid;gap:4px;width:100%;min-width:0;max-width:100%}
+  .side-nav .desktop-navigation-list{position:static;display:flex;flex:1 1 auto;flex-direction:column;flex-wrap:nowrap;align-items:stretch;min-height:0;width:100%;min-width:0;max-width:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-right:2px}
+  .desktop-nav-group{display:flex;flex:0 0 auto;flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:4px;width:100%;min-width:0;max-width:100%}
   .desktop-nav-group .nav-item{min-width:0;max-width:100%}
   .desktop-nav-group+.desktop-nav-group{margin-top:8px}
   .side-help{margin-top:12px;flex:0 0 auto}
   .workspace.nav-is-collapsed .side-nav,.workspace.nav-auto .side-nav{overflow:hidden}
   .workspace.nav-is-collapsed .side-nav .desktop-navigation-list,.workspace.nav-auto .side-nav .desktop-navigation-list{position:static;align-items:center}
-  .workspace.nav-is-collapsed .desktop-nav-group,.workspace.nav-auto .desktop-nav-group{justify-items:center;width:100%}
+  .workspace.nav-is-collapsed .desktop-nav-group,.workspace.nav-auto .desktop-nav-group{align-items:center;width:100%}
   .workspace.nav-is-collapsed .desktop-nav-group+.desktop-nav-group,.workspace.nav-auto .desktop-nav-group+.desktop-nav-group{margin-top:6px}
 }
 
