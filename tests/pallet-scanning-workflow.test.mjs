@@ -5,8 +5,11 @@ import { activePalletCaseIds } from '../src/lib/production/pallet-membership.ts'
 
 const text = (path) => readFileSync(new URL(path, import.meta.url), 'utf8');
 const migration = text('../supabase/migrations/027_pallet_scanning_workflow.sql');
+const palletCaseRpc = text('../supabase/migrations/011_fix_pallet_case_identifier_ambiguity.sql');
+const palletCorrections = text('../supabase/migrations/012_pallet_collaboration_corrections.sql');
 const securityPatch = text('../supabase/migrations/028_revoke_legacy_pallet_remove_execute.sql');
 const hardeningPatch = text('../supabase/migrations/029_harden_pallet_rpc_execute_privileges.sql');
+const authorizationValidation = text('../docs/security/027-pallet-rpc-authorization-behavioral-validation.sql');
 const page = text('../src/app/page.tsx');
 const scanCapture = text('../src/components/scan-capture.tsx');
 
@@ -35,6 +38,59 @@ test('corrections require authorized reason while production retains normal buil
   assert.match(page, /const canCorrect = \['office', 'leadership', 'lucid_admin'\]\.includes\(role\)/);
   assert.match(page, /Scan or enter Case ID/);
   assert.match(page, /onRawCapture/);
+});
+
+test('the add-case RPC rejects completed pallets before it can create a legacy or durable membership side effect', () => {
+  const addCaseFunction = palletCaseRpc.match(/create or replace function add_lucid_case_to_pallet[\s\S]*?\n\$\$;/)?.[0] || '';
+  assert.match(addCaseFunction, /if target_pallet\.status <> 'building' then raise exception 'This pallet is complete and cannot be changed\.'; end if;/);
+  assert.match(addCaseFunction, /insert into pallet_cases/);
+  assert.match(addCaseFunction, /update production_cases as case_row\s+set pallet_id = target_pallet\.id, status = 'palletized'/);
+  assert.match(addCaseFunction, /'case added to pallet'/);
+  assert.ok(
+    addCaseFunction.indexOf("This pallet is complete and cannot be changed.") < addCaseFunction.indexOf('insert into pallet_cases'),
+    'completed status must be checked before membership insert',
+  );
+  assert.ok(
+    addCaseFunction.indexOf("This pallet is complete and cannot be changed.") < addCaseFunction.indexOf("'case added to pallet'"),
+    'completed status must be checked before the audit insert',
+  );
+});
+
+test('Production is rejected by every pallet correction RPC while Office, Leadership, and Lucid Admin remain authorized', () => {
+  const removeFunction = migration.match(/create or replace function public\.remove_lucid_case_from_pallet\([\s\S]*?\n\$\$;/)?.[0] || '';
+  const moveFunction = migration.match(/create or replace function public\.move_lucid_case_between_pallets[\s\S]*?\n\$\$;/)?.[0] || '';
+  const reopenFunction = palletCorrections.match(/create or replace function reopen_lucid_pallet[\s\S]*?\n\$\$;/)?.[0] || '';
+  for (const fn of [removeFunction, moveFunction, reopenFunction]) {
+    assert.match(fn, /(?:actor|current_profile)\.role not in \('office', 'leadership', 'lucid_admin'\)/);
+    assert.doesNotMatch(fn, /'production'/);
+  }
+  assert.match(removeFunction, /A correction reason is required to remove a case/);
+  assert.match(moveFunction, /A correction reason is required to move a case/);
+  assert.match(reopenFunction, /A correction reason is required to reopen this pallet/);
+});
+
+test('durable assignment and completion invariants remain enforced by the backend foundation', () => {
+  const traceability = text('../supabase/migrations/013_traceability_foundation.sql');
+  assert.match(traceability, /create unique index if not exists pallet_case_assignments_one_active_case_idx\s+on pallet_case_assignments \(production_case_id\) where status = 'active';/);
+  assert.match(traceability, /create trigger sync_trace_pallet_case_assignment_insert/);
+  assert.match(traceability, /create trigger sync_trace_pallet_case_assignment_delete/);
+  assert.match(palletCorrections, /if target_pallet\.status <> 'complete' then raise exception 'Only completed pallets can be reopened for correction\.'; end if;/);
+  assert.match(palletCorrections, /set status = 'building'/);
+});
+
+test('the rollback-only pallet authorization validation exercises completed-pallet, Production, and authorized correction RPC paths', () => {
+  assert.match(authorizationValidation, /^begin;/m);
+  assert.match(authorizationValidation, /^set local role authenticated;/m);
+  assert.match(authorizationValidation, /add_lucid_case_to_pallet\(f\.completed_pallet_id, 'QA-027-PALLET-CASE-2'\)/);
+  assert.match(authorizationValidation, /Completed-pallet add denial left a side effect/);
+  for (const rpc of ['remove_lucid_case_from_pallet', 'move_lucid_case_between_pallets', 'reopen_lucid_pallet']) {
+    assert.match(authorizationValidation, new RegExp(`public\\.${rpc}`));
+  }
+  assert.match(authorizationValidation, /QA Office correction authorization/);
+  assert.match(authorizationValidation, /QA Leadership move authorization/);
+  assert.match(authorizationValidation, /QA Admin move authorization/);
+  assert.match(authorizationValidation, /exactly one active durable pallet assignment/);
+  assert.match(authorizationValidation, /^rollback;/m);
 });
 
 test('pallet preview is internal-only and never claims GS1 or SSCC', () => {
