@@ -77,6 +77,14 @@ test('removed pallet assignment history never contributes to current pallet memb
   assert.match(page, /activePalletCaseIds\(assignments, selectedPallet\.id\)/);
 });
 
+test('corrective pallet history renders persisted reasons without inventing reasons for normal events', () => {
+  assert.match(page, /function palletActivityReason/);
+  assert.match(page, /\['case moved between pallets', 'case removed from pallet', 'pallet reopened for correction'\]/);
+  assert.match(page, /Reason: \{reason\}/);
+  assert.match(page, /typeof values\.reason === 'string'/);
+  assert.doesNotMatch(page, /Reason: not provided/);
+});
+
 test('every pallet RPC signature explicitly revokes default public and anonymous execution', () => {
   for (const signature of [
     'create_lucid_pallet\\(uuid\\)',

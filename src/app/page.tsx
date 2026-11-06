@@ -85,6 +85,13 @@ function palletActivityCopy(action: string, details: unknown) {
   return 'updated this pallet.';
 }
 
+function palletActivityReason(action: string, details: unknown) {
+  if (!['case moved between pallets', 'case removed from pallet', 'pallet reopened for correction'].includes(action)) return null;
+  const values = details && typeof details === 'object' ? details as Record<string, unknown> : {};
+  const reason = typeof values.reason === 'string' ? values.reason.trim() : '';
+  return reason || null;
+}
+
 const stagedExceptionLabels: Record<string, string> = {
   CUSTOMER_UNMAPPED: 'Customer needs confirmation',
   SHIP_TO_UNMAPPED: 'Ship-to needs confirmation',
@@ -2098,7 +2105,7 @@ function PalletBreakdownHub({ organizationId, orders, pallets, cases, assignment
         const lineWeight = lineCases.reduce((total, productionCase) => total + (productionCase.net_weight || 0), 0);
         return <article className="surface pallet-item-group" key={lineId}><div className="pallet-item-head"><div><span className="kicker">Item</span><h2>{line ? productionItemName(line) : 'Item details unavailable'}</h2><p>{line ? productionItemIdentifier(line) : 'No item identifier'}</p></div><div><strong>{lineCases.reduce((total, productionCase) => total + productionCase.quantity, 0)} cases</strong><small>{lineWeight.toFixed(2)} lb total</small></div></div><details><summary>Show {lineCases.length} case{lineCases.length === 1 ? '' : 's'}</summary><div className="pallet-case-list">{lineCases.map(productionCase => <div key={productionCase.id}><span><strong>{productionCase.case_identifier}</strong><small>{productionCase.produced_at ? new Date(productionCase.produced_at).toLocaleString() : 'Production time unavailable'}{productionCase.lot_code ? ` · Prod Code ${productionCase.lot_code}` : ''}</small></span><strong>{productionCase.net_weight == null ? 'Weight unavailable' : `${productionCase.net_weight.toFixed(2)} ${productionCase.net_weight_uom}`}</strong>{selectedPallet.status === 'building' && canCorrect && <><button type="button" className="text-button danger-link" disabled={saving} onClick={() => void correctionAction('remove', selectedPallet.id, productionCase.id)}>Remove</button>{pallets.filter(p => p.order_id === selectedPallet.order_id && p.id !== selectedPallet.id && p.status === 'building').map(target => { const parts = target.pallet_identifier.split('-'); const number = target.pallet_sequence || parts[parts.length - 1]?.replace(/^0+/, '') || '—'; return <button key={target.id} type="button" className="text-button" disabled={saving} onClick={() => void correctionAction('move', selectedPallet.id, productionCase.id, target.id)}>Move to Pallet {number}</button>; })}</>}</div>)}</div></details></article>;
       })}</section>
-      <section className="surface pallet-activity"><div><span className="kicker">Activity</span><h2>What happened on this pallet</h2></div><div>{palletActivity.length ? palletActivity.map(activity => <p key={activity.id}><strong>{activity.actor_name || 'A team member'}</strong> {palletActivityCopy(activity.action, activity.details)}<small>{new Date(activity.created_at).toLocaleString()}</small></p>) : <p className="pallet-activity-empty">Activity will appear as the team works on this pallet.</p>}</div></section>
+      <section className="surface pallet-activity"><div><span className="kicker">Activity</span><h2>What happened on this pallet</h2></div><div>{palletActivity.length ? palletActivity.map(activity => { const reason = palletActivityReason(activity.action, activity.details); return <p key={activity.id}><strong>{activity.actor_name || 'A team member'}</strong> {palletActivityCopy(activity.action, activity.details)}{reason && <small>Reason: {reason}</small>}<small>{new Date(activity.created_at).toLocaleString()}</small></p>; }) : <p className="pallet-activity-empty">Activity will appear as the team works on this pallet.</p>}</div></section>
       {!assignedCases.length && <Empty title="No cases on this pallet yet" text="Scan or select an available case to begin the pallet breakdown." />}
     </section>;
   }
