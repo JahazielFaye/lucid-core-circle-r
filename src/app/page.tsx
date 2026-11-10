@@ -5,6 +5,7 @@ import { ArrowLeft, ArrowRightLeft, Bell, Boxes, ChartNoAxesCombined, CheckCheck
 import { orders as seedOrders, pallets as seedPallets } from '@/lib/core/mock';
 import type { Pallet, UnifiedOrder } from '@/lib/core/types';
 import { createClient } from '@/utils/supabase/client';
+import { resolveWorkspaceProfile, restoreWorkspaceSession, withAuthTimeout, type BootstrapResult, type WorkspaceProfile } from '@/lib/auth/bootstrap';
 import { createDirectConversation, loadSharedMessaging, markSharedMessagesRead, sendSharedMessage, type SharedMessagingSnapshot } from '@/lib/supabase/messaging';
 import { renderBrowserCaseLabel, type CaseLabelData } from '@/lib/production/case-label';
 import { MasterDataSetup } from '@/components/master-data-setup';
@@ -55,16 +56,10 @@ type UserRecord = {
   active: boolean;
 };
 
-type AuthProfile = {
-  id: string;
-  organization_id: string;
-  display_name: string;
-  role: Role;
-  active: boolean;
-};
+type AuthProfile = WorkspaceProfile;
 type StagedLine = { id:string; staged_order_id:string; line_number:string|null; buyer_part_number:string|null; vendor_item:string|null; gtin:string|null; description:string|null; quantity:number|null; sps_uom:string|null; sps_purchase_price:number|null; mapped_food_connex_item_number:string|null; approved_circle_r_price:number|null; item_mapping_status:string; price_status:string; uom_status:string };
 type StagedException = { id:string; staged_order_id:string; staged_order_line_id:string|null; exception_code:string; severity:'info'|'warning'|'blocking'; field_name:string|null; message:string; suggested_actions:string[]; status:string; details?: unknown; resolution_action?:string|null; resolved_at?:string|null; resolved_by?:string|null; resolved_by_name?:string|null };
-type StagedOrder = { id:string; source_file:string|null; source_path:string|null; external_po:string; trading_partner_id:string|null; po_date:string|null; requested_ship_date:string|null; source_customer_name:string|null; source_ship_to_name:string|null; source_ship_to_code:string|null; mapping_status:string; review_status:string; promoted_order_id:string|null; created_at:string };
+type StagedOrder = { id:string; source_file:string|null; source_path:string|null; source_filename:string|null; document_type:string|null; sps_id:string|null; fulfillment_document_id:string|null; business_po_number:string|null; external_po:string; trading_partner_id:string|null; po_date:string|null; requested_ship_date:string|null; source_customer_name:string|null; source_ship_to_name:string|null; source_ship_to_code:string|null; mapping_status:string; review_status:string; promoted_order_id:string|null; created_at:string };
 type ProductionLine = UnifiedOrder['lines'][number] & { id: string; nativeItemId?: string | null; gtin?: string | null; lotCode?: string | null };
 type OperationalOrder = Omit<UnifiedOrder, 'lines'> & { operationalStatus: string; orderDate?: string; sourceSystem?: string; lines: ProductionLine[] };
 type ProductionLot = { id:string; organization_id:string; order_id:string; order_line_id:string; lot_code:string; status:'active'|'closed'; created_at:string };
@@ -434,6 +429,7 @@ export default function Home() {
   const [selectedPalletId, setSelectedPalletId] = useState('');
   const [stagingLoaded, setStagingLoaded] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const authRequestVersion = useRef(0);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState('');
@@ -612,49 +608,43 @@ export default function Home() {
   }, [mobileNavOpen]);
 
   async function loadProfile(userId: string) {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('id, organization_id, display_name, role, active')
-      .eq('id', userId)
-      .maybeSingle();
-
-    const validRoles: Role[] = ['lucid_admin', 'leadership', 'office', 'production'];
-    if (error || !data || !data.active || !validRoles.includes(data.role as Role)) {
-      await supabase.auth.signOut();
-      setProfile(null);
-      setAuthError('Your Lucid Core account is not active. Contact an administrator.');
-      setAuthLoading(false);
-      return false;
-    }
-
-    setProfile(data as AuthProfile);
-    setAuthError('');
-    // TOKEN_REFRESHED and other non-null auth events are normal background work.
-    // Preserve the URL-selected workspace instead of restarting the user at Home.
+    const version = ++authRequestVersion.current;
+    const result = await resolveWorkspaceProfile(supabase, userId);
+    if (version !== authRequestVersion.current) return false;
+    setProfile(result.profile);
+    setAuthError(result.error);
     setAuthLoading(false);
-    return true;
+    return Boolean(result.profile);
   }
 
   useEffect(() => {
     let active = true;
-
-    async function restoreSession() {
-      const { data } = await supabase.auth.getSession();
-      if (data.session) await loadProfile(data.session.user.id);
-      else if (active) setAuthLoading(false);
-    }
-
-    void restoreSession();
+    let scheduled: ReturnType<typeof setTimeout> | undefined;
+    const apply = (result: BootstrapResult, version: number) => {
+      if (!active || version !== authRequestVersion.current) return;
+      setProfile(result.profile);
+      setAuthError(result.error);
+      setAuthLoading(false);
+    };
+    const version = ++authRequestVersion.current;
+    void restoreWorkspaceSession(supabase).then(result => apply(result, version));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) void loadProfile(session.user.id);
-      else if (active) {
-        setProfile(null);
-        setAuthLoading(false);
+      const nextVersion = ++authRequestVersion.current;
+      if (scheduled !== undefined) clearTimeout(scheduled);
+      if (!session) {
+        apply({ profile: null, error: '' }, nextVersion);
+        return;
       }
+      // Return from the auth callback before issuing any further SDK requests.
+      scheduled = setTimeout(() => {
+        if (!active || nextVersion !== authRequestVersion.current) return;
+        void resolveWorkspaceProfile(supabase, session.user.id).then(result => apply(result, nextVersion));
+      }, 0);
     });
-
     return () => {
       active = false;
+      ++authRequestVersion.current;
+      if (scheduled !== undefined) clearTimeout(scheduled);
       subscription.unsubscribe();
     };
   }, [supabase]);
@@ -706,7 +696,7 @@ export default function Home() {
     if (!profile) return;
     setStagingLoaded(false);
     const [ordersResult, linesResult, exceptionsResult, profilesResult, operationalOrdersResult, palletsResult, palletAuditResult] = await Promise.all([
-      supabase.from('sps_staged_orders').select('id, source_file, source_path, external_po, trading_partner_id, po_date, requested_ship_date, source_customer_name, source_ship_to_name, source_ship_to_code, mapping_status, review_status, promoted_order_id, created_at').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }),
+      supabase.from('sps_staged_orders').select('id, source_file, source_path, source_filename, document_type, sps_id, fulfillment_document_id, business_po_number, external_po, trading_partner_id, po_date, requested_ship_date, source_customer_name, source_ship_to_name, source_ship_to_code, mapping_status, review_status, promoted_order_id, created_at').eq('organization_id', profile.organization_id).order('created_at', { ascending: false }),
       supabase.from('sps_staged_order_lines').select('id, staged_order_id, line_number, buyer_part_number, vendor_item, gtin, description, quantity, sps_uom, sps_purchase_price, mapped_food_connex_item_number, approved_circle_r_price, item_mapping_status, price_status, uom_status').eq('organization_id', profile.organization_id),
       supabase.from('sps_order_exceptions').select('id, staged_order_id, staged_order_line_id, exception_code, severity, field_name, message, suggested_actions, status, details, resolution_action, resolved_at, resolved_by').eq('organization_id', profile.organization_id),
       supabase.from('profiles').select('id, display_name').eq('organization_id', profile.organization_id),
@@ -1015,14 +1005,20 @@ export default function Home() {
     event.preventDefault();
     setAuthPending(true);
     setAuthError('');
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error || !data.user) {
-      setAuthError('Invalid email or password. Please try again.');
+    try {
+      const { data, error } = await withAuthTimeout(() => supabase.auth.signInWithPassword({ email, password }));
+      if (error || !data.user) {
+        setAuthError('Invalid email or password. Please try again.');
+        return;
+      }
+      await loadProfile(data.user.id);
+    } catch {
+      setProfile(null);
+      setAuthError('Unable to sign in right now. Please try again.');
+      setAuthLoading(false);
+    } finally {
       setAuthPending(false);
-      return;
     }
-    await loadProfile(data.user.id);
-    setAuthPending(false);
   }
 
   async function requestPasswordReset(event: FormEvent<HTMLFormElement>) {
@@ -2150,7 +2146,7 @@ function StagedOrderReviewWorkspace({ order, lines, allLines, exceptions, role, 
   }, [activeStep, activeExceptionId, firstIncompleteStep, customerExceptions, itemExceptions, detailExceptions]);
   const mappedLines = lines.filter(line => line.item_mapping_status === 'mapped').length;
   const leadershipPending = openExceptions.some(exception => exception.exception_code === 'PRICE_MISMATCH' && Boolean(exception.details && typeof exception.details === 'object' && 'leadership_review_requested_at' in exception.details));
-  const readinessLabel = leadershipPending ? 'Waiting on leadership' : order.review_status === 'ready' ? 'Ready to process' : 'Not ready yet';
+  const readinessLabel = leadershipPending ? 'Waiting on leadership' : order.review_status === 'ready' ? 'Ready to promote' : order.document_type === '860' ? 'Change order review required' : 'Blocked — review required';
   const hasOpen = (code: string) => openExceptions.some(exception => exception.exception_code === code);
   const priceDifferences = openExceptions.filter(exception => exception.exception_code === 'PRICE_MISMATCH').length;
   const checksLeft = customerExceptions.length + itemExceptions.length + detailExceptions.length;
@@ -2225,6 +2221,7 @@ function StagedOrderReviewWorkspace({ order, lines, allLines, exceptions, role, 
         <p>{order.trading_partner_id ? `Trading partner ${order.trading_partner_id} · ` : ''}{order.source_customer_name || 'Customer to confirm'} · {order.source_ship_to_name || order.source_ship_to_code || 'Ship-to to confirm'}</p>
       </div>
       <div className="review-summary-meta">
+        <span><small>Source document</small><strong>{order.document_type || '850'}{order.sps_id ? ` · SPS ${order.sps_id}` : ''}</strong></span>
         <span><small>PO date</small><strong>{order.po_date || '—'}</strong></span>
         <span><small>Line items</small><strong>{lines.length}</strong></span>
         <span className={`status-chip ${order.review_status === 'ready' ? 'ready' : 'needs'}`}>{readinessLabel}</span>

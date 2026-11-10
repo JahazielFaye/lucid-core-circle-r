@@ -171,11 +171,18 @@ export function mapSpsPurchaseOrderToCircleR(
     if (uomStatus === 'mismatch') {
       exceptions.push({
         code: 'UOM_MISMATCH',
-        severity: 'warning',
+        severity: 'blocking',
         field: 'uom',
         lineNumber: line.lineNumber,
         message: 'SPS UOM differs from the explicitly mapped Food Connex UOM.',
         suggestedActions: ['Review UOM mapping', 'Update mapping'],
+      });
+    }
+    if (line.orderQty === null || line.orderQty <= 0) {
+      exceptions.push({
+        code: 'INVALID_QUANTITY', severity: 'blocking', field: 'quantity', lineNumber: line.lineNumber,
+        message: 'SPS quantity must be a positive value before this order can be promoted.',
+        suggestedActions: ['Review the incoming SPS quantity'],
       });
     }
 

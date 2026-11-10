@@ -1,12 +1,14 @@
 import { NextResponse } from 'next/server';
 
 import { importSandboxPurchaseOrder, StagingPipelineError } from '@/lib/integrations/circle-r-sps-staging';
+import { requireActiveLucidRouteUser, RouteAuthorizationError } from '@/lib/security/route-auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET() {
   try {
+    await requireActiveLucidRouteUser(['office', 'leadership', 'lucid_admin']);
     return NextResponse.json({ success: true, ...(await importSandboxPurchaseOrder()) });
   } catch (error) {
     const pipelineError = error instanceof StagingPipelineError ? error : null;
@@ -27,7 +29,7 @@ export async function GET() {
         ...(typeof databaseError?.code === 'string' ? { code: databaseError.code } : {}),
         ...(typeof databaseError?.hint === 'string' ? { hint: databaseError.hint } : {}),
       },
-      { status: pipelineError?.stage === 'auth' || pipelineError?.stage === 'profile' ? 401 : 500 },
+      { status: error instanceof RouteAuthorizationError ? error.status : pipelineError?.stage === 'auth' || pipelineError?.stage === 'profile' ? 401 : 500 },
     );
   }
 }

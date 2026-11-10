@@ -16,6 +16,10 @@ export type ReusableSpsMappings = {
   customerMapping: CustomerMapping | null;
   shipToMapping: ShipToMapping | null;
   itemMappingsByLineNumber: Map<string, ItemMapping>;
+  ambiguousLineNumbers: Set<string>;
+  inactiveCustomerMapping: boolean;
+  inactiveShipToMapping: boolean;
+  inactiveItemLineNumbers: Set<string>;
 };
 
 /**
@@ -46,23 +50,46 @@ export async function loadReusableSpsMappings(
     .filter(row => row.source_location_code === purchaseOrder.shipTo?.locationNumber))[0] || null;
   const itemMappings = (itemsResult.data || []) as ItemMapping[];
   const itemMappingsByLineNumber = new Map<string, ItemMapping>();
+  const ambiguousLineNumbers = new Set<string>();
 
   for (const line of purchaseOrder.lines) {
     if (!line.lineNumber) continue;
-    const scoped = selectScope(itemMappings);
-    // Identifier precedence is deterministic within each scope.
-    const matched = [
-      line.buyerPartNumber ? scoped.find(row => row.buyer_part_number === line.buyerPartNumber) : undefined,
-      line.vendorPartNumber ? scoped.find(row => row.vendor_item === line.vendorPartNumber) : undefined,
-      line.gtin ? scoped.find(row => row.gtin === line.gtin) : undefined,
-    ].find((row): row is ItemMapping => Boolean(row));
-    if (matched) itemMappingsByLineNumber.set(line.lineNumber, matched);
+    const partnerRows = itemMappings.filter(row => row.source_trading_partner_id === partnerId);
+    const globalRows = itemMappings.filter(row => row.source_trading_partner_id === null);
+    const matches = (rows: ItemMapping[]) => rows.filter(row =>
+      (line.buyerPartNumber && row.buyer_part_number === line.buyerPartNumber) ||
+      (line.vendorPartNumber && row.vendor_item === line.vendorPartNumber) ||
+      (line.gtin && row.gtin === line.gtin),
+    );
+    const candidates = matches(partnerRows);
+    const authoritativeCandidates = candidates.length ? candidates : matches(globalRows);
+    const targetKeys = new Set(authoritativeCandidates.map(row => row.item_id || row.food_connex_item_number));
+    if (targetKeys.size > 1) { ambiguousLineNumbers.add(line.lineNumber); continue; }
+    if (authoritativeCandidates[0]) itemMappingsByLineNumber.set(line.lineNumber, authoritativeCandidates[0]);
   }
+
+  const customerIds = [customerMapping?.customer_id].filter((id): id is string => Boolean(id));
+  const shipToIds = [shipToMapping?.ship_to_id].filter((id): id is string => Boolean(id));
+  const itemIds = Array.from(itemMappingsByLineNumber.values()).map(mapping => mapping.item_id).filter((id): id is string => Boolean(id));
+  const [customerStates, shipToStates, itemStates] = await Promise.all([
+    customerIds.length ? supabase.from('customers').select('id, status').in('id', customerIds) : Promise.resolve({ data: [], error: null }),
+    shipToIds.length ? supabase.from('customer_ship_tos').select('id, status').in('id', shipToIds) : Promise.resolve({ data: [], error: null }),
+    itemIds.length ? supabase.from('items').select('id, status').in('id', itemIds) : Promise.resolve({ data: [], error: null }),
+  ]);
+  if (customerStates.error || shipToStates.error || itemStates.error) throw customerStates.error || shipToStates.error || itemStates.error;
+  const activeCustomerIds = new Set((customerStates.data || []).filter((row: { status: string }) => row.status === 'active').map((row: { id: string }) => row.id));
+  const activeShipToIds = new Set((shipToStates.data || []).filter((row: { status: string }) => row.status === 'active').map((row: { id: string }) => row.id));
+  const activeItemIds = new Set((itemStates.data || []).filter((row: { status: string }) => row.status === 'active').map((row: { id: string }) => row.id));
+  const inactiveItemLineNumbers = new Set(Array.from(itemMappingsByLineNumber.entries()).filter(([, mapping]) => Boolean(mapping.item_id) && !activeItemIds.has(mapping.item_id!)).map(([lineNumber]) => lineNumber));
 
   return {
     customerMapping,
     shipToMapping,
     itemMappingsByLineNumber,
+    ambiguousLineNumbers,
+    inactiveCustomerMapping: Boolean(customerMapping?.customer_id) && !activeCustomerIds.has(customerMapping.customer_id!),
+    inactiveShipToMapping: Boolean(shipToMapping?.ship_to_id) && !activeShipToIds.has(shipToMapping.ship_to_id!),
+    inactiveItemLineNumbers,
     configuration: {
       customers: customerMapping && partnerId ? [{ spsTradingPartnerId: partnerId, foodConnexCustomerId: customerMapping.food_connex_customer_id || '', foodConnexCustomerName: customerMapping.food_connex_customer_name || '' }] : [],
       shipTos: shipToMapping && purchaseOrder.shipTo?.locationNumber ? [{ spsLocationCode: purchaseOrder.shipTo.locationNumber, foodConnexShipToId: shipToMapping.food_connex_ship_to_id || '', foodConnexShipToName: shipToMapping.food_connex_ship_to_name || '' }] : [],

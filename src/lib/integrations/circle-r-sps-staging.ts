@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHash } from 'node:crypto';
+
 import { createClient } from '@/utils/supabase/server';
 
 import { mapSpsPurchaseOrderToCircleR } from './circle-r-po-mapper';
@@ -62,18 +64,41 @@ export async function importSandboxPurchaseOrderFromSourcePath(sourcePath: strin
   const candidate = await atStage('map', () => Promise.resolve(mapSpsPurchaseOrderToCircleR(
     purchaseOrder, reusableMappings.configuration,
   )));
+  for (const line of candidate.order.lines) {
+    if (line.lineNumber && reusableMappings.ambiguousLineNumbers.has(line.lineNumber)) {
+      line.itemMappingStatus = 'ambiguous';
+      candidate.exceptions.push({ code: 'ITEM_MAPPING_AMBIGUOUS', severity: 'blocking', field: 'item', lineNumber: line.lineNumber, message: 'More than one explicit Lucid item mapping matches this SPS line.', suggestedActions: ['Review the configured item mappings'] });
+    }
+    if (line.lineNumber && reusableMappings.inactiveItemLineNumbers.has(line.lineNumber)) {
+      line.itemMappingStatus = 'unmapped';
+      candidate.exceptions.push({ code: 'INACTIVE_ITEM_MAPPING', severity: 'blocking', field: 'item', lineNumber: line.lineNumber, message: 'The configured Lucid Item is inactive and cannot be used for this order.', suggestedActions: ['Choose an active Lucid Item'] });
+    }
+  }
+  if (reusableMappings.inactiveCustomerMapping) candidate.exceptions.push({ code: 'INACTIVE_CUSTOMER_MAPPING', severity: 'blocking', field: 'customer', lineNumber: null, message: 'The configured Lucid Customer is inactive and cannot be used for this order.', suggestedActions: ['Choose an active Lucid Customer'] });
+  if (reusableMappings.inactiveShipToMapping) candidate.exceptions.push({ code: 'INACTIVE_SHIP_TO_MAPPING', severity: 'blocking', field: 'ship-to', lineNumber: null, message: 'The configured Lucid Ship-To is inactive and cannot be used for this order.', suggestedActions: ['Choose an active Lucid Ship-To'] });
+  if (candidate.exceptions.some(exception => exception.severity === 'blocking')) candidate.status = 'unmapped';
   const poNumber = candidate.order.poNumber;
   const tradingPartnerId = candidate.order.tradingPartnerId;
   if (!poNumber || !tradingPartnerId) {
     throw new Error('The SPS Sandbox PO is missing its required PO identity.');
   }
 
+  const documentType = '850';
+  const payloadHash = createHash('sha256').update(transaction.payload).digest('hex');
+  // Sandbox payloads do not currently expose a proven SPS ID. Their content hash
+  // is therefore an evidence-preserving retry key, not a claim about SPS delivery.
+  const sourceDocumentKey = `payload:${documentType}:${payloadHash}`;
   const payload = {
     organization_id: organizationId,
     source_system: 'sps',
     source_file: sourcePath.split('/').at(-1) ?? sourcePath,
     source_path: sourcePath,
     external_po: poNumber,
+    business_po_number: poNumber,
+    document_type: documentType,
+    source_filename: sourcePath.split('/').at(-1) ?? sourcePath,
+    payload_hash: payloadHash,
+    source_document_key: sourceDocumentKey,
     trading_partner_id: tradingPartnerId,
     po_date: candidate.order.poDate,
     requested_ship_date: candidate.order.requestedDate,
@@ -89,8 +114,13 @@ export async function importSandboxPurchaseOrderFromSourcePath(sourcePath: strin
     normalized_payload: purchaseOrder,
   };
   const stagedOrder = await atStage('persist_staged_order', () => upsertStagedOrder(
-    supabase, organizationId, tradingPartnerId, poNumber, payload,
+    supabase, organizationId, sourceDocumentKey, payloadHash, payload,
   ));
+  // A retry or a source-identity conflict must never refresh staged evidence.
+  // The latter remains explicitly reviewable through its blocking exception.
+  if (stagedOrder.reused) {
+    return { stagedOrderId: stagedOrder.id, sourcePath, poNumber, lineCount: 0, exceptionCount: 0, mappingStatus: stagedOrder.mapping_status, reviewStatus: stagedOrder.review_status, reused: true };
+  }
 
   const { error: deleteExceptionsError } = await supabase
     .from('sps_order_exceptions').delete().eq('staged_order_id', stagedOrder.id);
@@ -256,12 +286,20 @@ export async function persistCircleRFixture() {
 
   const mappingStatus = candidate.status === 'ready' ? 'mapped' : 'needs_review';
   const reviewStatus = candidate.status === 'ready' ? 'ready' : 'needs_review';
+  const fixturePayloadHash = createHash('sha256')
+    .update(JSON.stringify(circleRVerifiedPurchaseOrderFixture))
+    .digest('hex');
   const stagedOrderPayload = {
     organization_id: organizationId,
     source_system: 'sps',
     source_file: circleRVerifiedPurchaseOrderFixture.sourceFile,
     source_path: null,
     external_po: poNumber,
+    business_po_number: poNumber,
+    document_type: '850',
+    source_filename: circleRVerifiedPurchaseOrderFixture.sourceFile,
+    payload_hash: fixturePayloadHash,
+    source_document_key: `fixture:850:${fixturePayloadHash}`,
     trading_partner_id: tradingPartnerId,
     po_date: candidate.order.poDate,
     requested_ship_date: candidate.order.requestedDate,
@@ -279,13 +317,24 @@ export async function persistCircleRFixture() {
 
   const { data: existingOrder, error: existingOrderError } = await supabase
     .from('sps_staged_orders')
-    .select('id')
+    .select('id, review_status')
     .eq('organization_id', organizationId)
     .eq('source_system', 'sps')
     .eq('trading_partner_id', tradingPartnerId)
     .eq('external_po', poNumber)
     .maybeSingle();
   if (existingOrderError) throw existingOrderError;
+
+  if (existingOrder?.review_status === 'promoted') {
+    return {
+      stagedOrderId: existingOrder.id,
+      poNumber,
+      lineCount: 0,
+      exceptionCount: 0,
+      mappingStatus,
+      reviewStatus: 'promoted',
+    };
+  }
 
   const stagedOrder = existingOrder
     ? await updateStagedOrder(supabase, existingOrder.id, stagedOrderPayload)
@@ -379,9 +428,12 @@ async function getActiveOrganizationId(supabase: Supabase): Promise<string> {
     throw new StagingAuthError('An authenticated Lucid Core session is required.');
   }
   const { data: profile, error: profileError } = await supabase
-    .from('profiles').select('organization_id, active').eq('id', user.id).maybeSingle();
+    .from('profiles').select('organization_id, active, role').eq('id', user.id).maybeSingle();
   if (profileError || !profile?.active) {
     throw new StagingAuthError('An active Lucid Core profile is required.', 'profile');
+  }
+  if (!['office', 'leadership', 'lucid_admin'].includes(profile.role)) {
+    throw new StagingAuthError('Your role cannot stage incoming SPS orders.', 'profile');
   }
   return profile.organization_id;
 }
@@ -396,16 +448,39 @@ async function atStage<T>(stage: ImportStage, operation: () => Promise<T>): Prom
 }
 
 async function upsertStagedOrder(
-  supabase: Supabase, organizationId: string, tradingPartnerId: string,
-  poNumber: string, payload: Record<string, unknown>,
+  supabase: Supabase, organizationId: string, sourceDocumentKey: string,
+  payloadHash: string, payload: Record<string, unknown>,
 ) {
-  const { data: existing, error } = await supabase.from('sps_staged_orders')
+  const { data: identifiedExisting, error } = await supabase.from('sps_staged_orders')
     .select('id').eq('organization_id', organizationId).eq('source_system', 'sps')
-    .eq('trading_partner_id', tradingPartnerId).eq('external_po', poNumber).maybeSingle();
+    .eq('source_document_key', sourceDocumentKey).maybeSingle();
   if (error) throw error;
-  return existing
-    ? updateStagedOrder(supabase, existing.id, payload)
-    : insertStagedOrder(supabase, payload);
+  const sourcePath = typeof payload.source_path === 'string' ? payload.source_path : null;
+  const { data: legacyExisting, error: legacyError } = identifiedExisting || !sourcePath
+    ? { data: null, error: null }
+    : await supabase.from('sps_staged_orders').select('id')
+      .eq('organization_id', organizationId).eq('source_system', 'sps')
+      .is('source_document_key', null).eq('source_path', sourcePath).maybeSingle();
+  if (legacyError) throw legacyError;
+  const existing = identifiedExisting ?? legacyExisting;
+  if (!existing) return { ...(await insertStagedOrder(supabase, payload)), reused: false, payload_hash: payloadHash, review_status: String(payload.review_status), mapping_status: String(payload.mapping_status) };
+  const { data: current, error: currentError } = await supabase.from('sps_staged_orders')
+    .select('id, review_status, mapping_status, payload_hash').eq('id', existing.id).single();
+  if (currentError) throw currentError;
+  if (current.review_status === 'promoted' || current.payload_hash === payloadHash) return { ...current, reused: true };
+  // A matched source key with different evidence is never overwritten. It is a
+  // review condition until SPS delivery/revision semantics are configured.
+  const { error: reviewError } = await supabase.from('sps_staged_orders')
+    .update({ review_status: 'needs_review', mapping_status: 'needs_review' }).eq('id', current.id);
+  if (reviewError) throw reviewError;
+  const { error: exceptionError } = await supabase.from('sps_order_exceptions').insert({
+    organization_id: organizationId, staged_order_id: current.id,
+    exception_code: 'SOURCE_DOCUMENT_CONFLICT', severity: 'blocking', field_name: 'source_document_key',
+    message: 'A source document with this identity has different content and needs review.',
+    suggested_actions: ['Review the SPS source document before re-importing'], details: { source_document_key: sourceDocumentKey }, status: 'open',
+  });
+  if (exceptionError) throw exceptionError;
+  return { ...current, reused: true, payload_hash: current.payload_hash, review_status: 'needs_review', mapping_status: 'needs_review' };
 }
 
 async function ensureCustomerMapping(supabase: Supabase, organizationId: string) {
