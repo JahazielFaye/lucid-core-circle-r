@@ -68,3 +68,28 @@ test('Webpack eval is permitted in development only; production CSP stays strict
   if(originalURL===undefined)delete process.env.NEXT_PUBLIC_SUPABASE_URL;else process.env.NEXT_PUBLIC_SUPABASE_URL=originalURL;
  }
 });
+
+
+test('post-login realtime CSP allows only the configured Supabase socket origin, preserving ports and other directives',async()=>{
+ const savedMode=process.env.NODE_ENV,savedURL=process.env.NEXT_PUBLIC_SUPABASE_URL;
+ try{
+  const scenarios=[
+   ['https://qa-project.supabase.co','https://qa-project.supabase.co','wss://qa-project.supabase.co'],
+   ['https://qa-project.supabase.co:8443/path','https://qa-project.supabase.co:8443','wss://qa-project.supabase.co:8443'],
+   ['http://127.0.0.1:54321','http://127.0.0.1:54321','ws://127.0.0.1:54321'],
+   [undefined,null,null],
+  ];
+  for(const [index,[url,http,socket]] of scenarios.entries()){
+   process.env.NODE_ENV='production';if(url===undefined)delete process.env.NEXT_PUBLIC_SUPABASE_URL;else process.env.NEXT_PUBLIC_SUPABASE_URL=url;
+   const {default:config}=await import(`../next.config.ts?socket-csp=${index}`);
+   const csp=(await config.headers())[0].headers.find(h=>h.key==='Content-Security-Policy').value;
+   assert.equal(csp.match(/connect-src ([^;]+);/)[1],["'self'",http,socket].filter(Boolean).join(' '));
+   assert.doesNotMatch(csp,/unsafe-eval|wss:\/\/\*|connect-src \*/);
+   assert.match(csp,/frame-ancestors 'none';/);assert.match(csp,/object-src 'none';/);
+   assert.match(csp,/script-src 'self' 'unsafe-inline';/);
+  }
+ }finally{
+  if(savedMode===undefined)delete process.env.NODE_ENV;else process.env.NODE_ENV=savedMode;
+  if(savedURL===undefined)delete process.env.NEXT_PUBLIC_SUPABASE_URL;else process.env.NEXT_PUBLIC_SUPABASE_URL=savedURL;
+ }
+});

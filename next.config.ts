@@ -3,7 +3,13 @@ import type { NextConfig } from 'next';
 const configuredSupabaseOrigin = process.env.NEXT_PUBLIC_SUPABASE_URL
   ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).origin
   : null;
-const connectSources = ["'self'", configuredSupabaseOrigin].filter(Boolean).join(' ');
+// Realtime starts after sign-in. WebKit enforces WebSocket CSP separately from HTTPS.
+const configuredSupabaseSocketOrigin = configuredSupabaseOrigin?.startsWith('https://')
+  ? configuredSupabaseOrigin.replace('https://', 'wss://')
+  : configuredSupabaseOrigin?.startsWith('http://')
+    ? configuredSupabaseOrigin.replace('http://', 'ws://')
+    : null;
+const connectSources = ["'self'", configuredSupabaseOrigin, configuredSupabaseSocketOrigin].filter(Boolean).join(' ');
 // Webpack development bundles use eval; production keeps the existing stricter CSP.
 const developmentScriptPolicy = process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : '';
 const securityHeaders = [
