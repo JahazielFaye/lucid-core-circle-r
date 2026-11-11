@@ -1,0 +1,9 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { prepareCameraVideo } from '../src/lib/scanning/camera-video.ts';
+class Video extends EventTarget { readyState=0; videoWidth=0; videoHeight=0; setAttribute(){} play(){return Promise.resolve();} }
+test('stream attaches with inline muted playback and waits for real frames',async()=>{const video=new Video(), stream={}; const ready=prepareCameraVideo(video,stream,new AbortController().signal); assert.equal(video.srcObject,stream); assert.equal(video.playsInline,true); assert.equal(video.muted,true); await Promise.resolve(); video.readyState=2;video.videoWidth=640;video.videoHeight=480;video.dispatchEvent(new Event('loadeddata'));await ready;});
+test('play rejection is surfaced instead of becoming an unhandled timer rejection',async()=>{const video=new Video();video.play=()=>Promise.reject(new Error('blocked playback'));await assert.rejects(prepareCameraVideo(video,{},new AbortController().signal),/blocked playback/);});
+test('missing frames time out safely',async()=>{await assert.rejects(prepareCameraVideo(new Video(),{},new AbortController().signal,5),/timed out/);});
+test('closing cancels readiness',async()=>{const abort=new AbortController();const ready=prepareCameraVideo(new Video(),{},abort.signal);abort.abort();await assert.rejects(ready,/closed/);});
+test('scanner fallback reuses one camera acquisition and attaches after mount',async()=>{const {readFile}=await import('node:fs/promises'); const source=await readFile(new URL('../src/components/scan-capture.tsx',import.meta.url),'utf8');assert.equal((source.match(/await navigator\.mediaDevices\.getUserMedia\(/g)||[]).length,1);assert.doesNotMatch(source,/decodeFromVideoDevice|decodeFromConstraints/);assert.match(source,/decodeFromStream\(cameraStream, element/);assert.match(source,/await prepareCameraVideo/);assert.match(source,/\}, \[cameraStream\]\)/);});
